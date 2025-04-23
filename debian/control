@@ -1,0 +1,12 @@
+Source: ros-rolling-rosgraph-monitor
+Section: misc
+Priority: optional
+Maintainer: Bonsai Robotics Engineering <emerson.knapp@bonsairobotics.ai>
+Build-Depends: debhelper (>= 9.0.0), ros-rolling-ament-cmake, ros-rolling-ament-cmake-gmock <!nocheck>, ros-rolling-ament-lint-auto <!nocheck>, ros-rolling-ament-lint-common <!nocheck>, ros-rolling-diagnostic-aggregator, ros-rolling-diagnostic-msgs, ros-rolling-generate-parameter-library, ros-rolling-launch-ros <!nocheck>, ros-rolling-launch-testing-ament-cmake <!nocheck>, ros-rolling-pluginlib, ros-rolling-rclcpp, ros-rolling-rclcpp-components, ros-rolling-rosgraph-monitor-msgs, ros-rolling-ros-workspace
+Homepage: 
+Standards-Version: 3.9.2
+
+Package: ros-rolling-rosgraph-monitor
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-rolling-diagnostic-aggregator, ros-rolling-diagnostic-msgs, ros-rolling-pluginlib, ros-rolling-rclcpp, ros-rolling-rclcpp-components, ros-rolling-rosgraph-monitor-msgs, ros-rolling-ros-workspace
+Description: Monitors the ROS graph to detect error conditions
