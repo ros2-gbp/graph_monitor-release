@@ -1,0 +1,30 @@
+ros-humble-rosgraph-monitor-msgs (0.2.1-1jammy) jammy; urgency=high
+
+  * Fix dependency spec in package xmls, for buildfarm fixing (#35 <https://github.com/ros-tooling/graph-monitor/issues/35>)
+  * Contributors: Emerson Knapp
+
+ -- Emerson Knapp <emerson.b.knapp@gmail.com>  Wed, 15 Oct 2025 07:00:00 -0000
+
+ros-humble-rosgraph-monitor-msgs (0.2.0-1jammy) jammy; urgency=high
+
+  * Add parameters to message definition (#26 <https://github.com/ros-tooling/graph-monitor/issues/26>)
+  * Add Topic.msg and QosProfile.msg (#23 <https://github.com/ros-tooling/graph-monitor/issues/23>)
+  * Add NodeInfo.msg and Graph.msg (#20 <https://github.com/ros-tooling/graph-monitor/issues/20>)
+  * Contributors: Emerson Knapp, Troy Gibb
+
+ -- Emerson Knapp <emerson.b.knapp@gmail.com>  Thu, 07 Aug 2025 07:00:00 -0000
+
+ros-humble-rosgraph-monitor-msgs (0.1.2-1jammy) jammy; urgency=high
+
+
+
+ -- Emerson Knapp <emerson.b.knapp@gmail.com>  Mon, 12 May 2025 07:00:00 -0000
+
+ros-humble-rosgraph-monitor-msgs (0.1.1-1jammy) jammy; urgency=high
+
+  * Initial package setup
+  * Contributors: Emerson Knapp
+
+ -- Emerson Knapp <emerson.knapp@bonsairobotics.ai>  Wed, 09 Apr 2025 07:00:00 -0000
+
+
