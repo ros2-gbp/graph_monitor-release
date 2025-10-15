@@ -1,0 +1,12 @@
+Source: ros-rolling-rosgraph-monitor-test
+Section: misc
+Priority: optional
+Maintainer: Troy Gibb <troy@polymathrobotics.com>
+Build-Depends: debhelper (>= 9.0.0), ros-rolling-ament-cmake, ros-rolling-ament-cmake-python, ros-rolling-ament-lint-auto <!nocheck>, ros-rolling-ament-lint-common <!nocheck>, ros-rolling-diagnostic-msgs <!nocheck>, ros-rolling-launch-ros <!nocheck>, ros-rolling-launch-testing <!nocheck>, ros-rolling-launch-testing-ament-cmake <!nocheck>, ros-rolling-rosgraph-monitor <!nocheck>, ros-rolling-rosgraph-monitor-msgs <!nocheck>, ros-rolling-std-msgs <!nocheck>, ros-rolling-ros-workspace
+Homepage: 
+Standards-Version: 3.9.2
+
+Package: ros-rolling-rosgraph-monitor-test
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-rolling-rclpy, ros-rolling-ros-workspace
+Description: Test package for rosgraph_monitor containing launch tests and test utilities
