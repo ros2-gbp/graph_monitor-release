@@ -1,10 +1,6 @@
-# ROS 2 Graph Monitor
+# rosgraph_monitor_msgs
 
-The packages in this repository implement application-level health monitoring for a ROS 2 connected graph of nodes.
+Provides messages for communication about understanding gained from monitoring the ROS application graph:
 
-The components were originally presented at ROSCon 2024 in "ROS robot health monitoring, the Bonsai approach": https://vimeo.com/1024971769
-
-See each package's README for more detailed information:
-* [rosgraph_monitor](./rosgraph_monitor/) - Component to monitor the ROS graph and publish resulting diagnostics
-* [rosgraph_monitor_msgs](./rosgraph_monitor_msgs/) - Messages for reporting graph monitoring information, namely topic statistics
-* [rmw_stats_shim](./rmw_stats_shim/) - RMW wrapper to efficiently gather and report topic statistics for all nodes
+* [TopicStatistic.msg](./msg/TopicStatistic.msg) - A single statistic about one endpoint (Publisher/Subscription)
+* [TopicStatistics.msg](./msg/TopicStatistics.msg) - A timestamped array of `TopicStatistic`, for a Node to report periodically in bulk about all its endpoints
