@@ -1,3 +1,30 @@
+## graph_monitor (rolling) - 0.2.1-1
+
+The packages in the `graph_monitor` repository were released into the `rolling` distro by running `/home/emerson/.local/bin/bloom-release --rosdistro rolling graph_monitor` on `Wed, 15 Oct 2025 07:03:47 -0000`
+
+These packages were released:
+- `rmw_stats_shim`
+- `rosgraph_monitor`
+- `rosgraph_monitor_msgs`
+- `rosgraph_monitor_test`
+
+Version of package(s) in repository `graph_monitor`:
+
+- upstream repository: https://github.com/ros-tooling/graph-monitor.git
+- release repository: https://github.com/ros2-gbp/graph_monitor-release.git
+- rosdistro version: `0.1.1-1`
+- old version: `0.1.1-1`
+- new version: `0.2.1-1`
+
+Versions of tools used:
+
+- bloom version: `0.12.0`
+- catkin_pkg version: `0.5.2`
+- rosdep version: `0.22.2`
+- rosdistro version: `0.9.0`
+- vcstools version: `0.1.42`
+
+
 ## graph_monitor (kilted) - 0.1.2-1
 
 The packages in the `graph_monitor` repository were released into the `kilted` distro by running `/home/emerson/.local/bin/bloom-release --new-track --rosdistro kilted --track kilted graph_monitor` on `Mon, 12 May 2025 22:50:26 -0000`
