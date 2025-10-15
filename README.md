@@ -1,10 +1,22 @@
-# ROS 2 Graph Monitor
+# rosgraph_monitor_test
 
-The packages in this repository implement application-level health monitoring for a ROS 2 connected graph of nodes.
+Integration test package for the `rosgraph_monitor` ROS2 package.
 
-The components were originally presented at ROSCon 2024 in "ROS robot health monitoring, the Bonsai approach": https://vimeo.com/1024971769
+## Overview
 
-See each package's README for more detailed information:
-* [rosgraph_monitor](./rosgraph_monitor/) - Component to monitor the ROS graph and publish resulting diagnostics
-* [rosgraph_monitor_msgs](./rosgraph_monitor_msgs/) - Messages for reporting graph monitoring information, namely topic statistics
-* [rmw_stats_shim](./rmw_stats_shim/) - RMW wrapper to efficiently gather and report topic statistics for all nodes
+This package contains integration tests that verify the behavior of the `rosgraph_monitor` package in realistic ROS2 environments. It includes launch tests that spin up the actual monitor nodes and validate their ability to detect graph topology changes, node lifecycle events, and diagnostic status reporting.
+
+## Usage
+
+### Running Tests
+
+```bash
+# Run all launch tests
+colcon test --packages-select rosgraph_monitor_test
+
+# Run specific test file
+launch_test src/graph-monitor/rosgraph_monitor_test/test/test_graph_monitor_launch.py
+
+# Run with verbose output
+launch_test --verbose src/graph-monitor/rosgraph_monitor_test/test/test_graph_monitor_launch.py
+```
