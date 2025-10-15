@@ -1,3 +1,30 @@
+## graph_monitor (humble) - 0.2.1-1
+
+The packages in the `graph_monitor` repository were released into the `humble` distro by running `/home/emerson/.local/bin/bloom-release --rosdistro humble graph_monitor -y` on `Wed, 15 Oct 2025 07:13:00 -0000`
+
+These packages were released:
+- `rmw_stats_shim`
+- `rosgraph_monitor`
+- `rosgraph_monitor_msgs`
+- `rosgraph_monitor_test`
+
+Version of package(s) in repository `graph_monitor`:
+
+- upstream repository: https://github.com/ros-tooling/graph-monitor.git
+- release repository: https://github.com/ros2-gbp/graph_monitor-release.git
+- rosdistro version: `0.1.1-1`
+- old version: `0.1.1-1`
+- new version: `0.2.1-1`
+
+Versions of tools used:
+
+- bloom version: `0.12.0`
+- catkin_pkg version: `0.5.2`
+- rosdep version: `0.22.2`
+- rosdistro version: `0.9.0`
+- vcstools version: `0.1.42`
+
+
 ## graph_monitor (jazzy) - 0.2.1-1
 
 The packages in the `graph_monitor` repository were released into the `jazzy` distro by running `/home/emerson/.local/bin/bloom-release --rosdistro jazzy graph_monitor -y` on `Wed, 15 Oct 2025 07:10:51 -0000`
