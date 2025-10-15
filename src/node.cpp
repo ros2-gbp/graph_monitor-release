@@ -14,8 +14,16 @@
 
 #include "rosgraph_monitor/node.hpp"
 
+#include <memory>
+#include <unordered_set>
+#include <utility>
+#include <vector>
+#include <string>
+
 #include "rclcpp/node.hpp"
+#include "rclcpp/parameter_client.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
+#include "rosgraph_monitor_msgs/msg/graph.hpp"
 #include "rosgraph_monitor_msgs/msg/topic_statistics.hpp"
 
 #include "rosgraph_monitor/rosgraph_monitor_generated_parameters.hpp"
@@ -48,19 +56,21 @@ GraphMonitorConfiguration Node::create_graph_monitor_config(
   gconf.topic_statistics.deadline_allowed_error = gparms.topic_statistics.deadline_allowed_error;
   gconf.topic_statistics.stale_timeout =
     std::chrono::milliseconds{gparms.topic_statistics.stale_timeout_ms};
+  gconf.topic_statistics.mandatory_topics = vec_to_set(gparms.topic_statistics.mandatory_topics);
+  gconf.topic_statistics.ignore_topics = vec_to_set(gparms.topic_statistics.ignore_topics);
   return gconf;
 }
 
 Node::Node(const rclcpp::NodeOptions & options)
 : rclcpp::Node("rosgraph_monitor", options),
-  param_cb_handle_(get_node_parameters_interface()->add_on_set_parameters_callback(
-      std::bind(&Node::on_parameter_event, this, std::placeholders::_1))),
-  param_listener_(new rosgraph_monitor::ParamListener(get_node_parameters_interface())),
-  params_(param_listener_->get_params()),
+  param_listener_(get_node_parameters_interface()),
+  params_(param_listener_.get_params()),
   graph_monitor_(
     get_node_graph_interface(),
     [this]() {return get_clock()->now();},
     get_logger().get_child("rosgraph"),
+    std::bind(
+      &Node::query_params, this, std::placeholders::_1, std::placeholders::_2),
     create_graph_monitor_config(params_)),
   sub_topic_statistics_(
     create_subscription<rosgraph_monitor_msgs::msg::TopicStatistics>(
@@ -71,47 +81,76 @@ Node::Node(const rclcpp::NodeOptions & options)
     create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
       "/diagnostics",
       10)),
-  pub_diagnostic_agg_(
-    create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
-      "/diagnostics_agg",
-      10)),
-  pub_diagnostic_toplevel_(
-    create_publisher<diagnostic_msgs::msg::DiagnosticStatus>(
-      "/diagnostics_toplevel_status",
-      10))
-{
-  graph_analyzer_.init("/Health", params_.graph_analyzer);
+  pub_rosgraph_(
+    create_publisher<rosgraph_monitor_msgs::msg::Graph>(
+      "/rosgraph",
+      rclcpp::QoS(1).transient_local().reliable())),
 
-  // Don't start evaluation timer until after first configuration of the monitor
-  timer_publish_report_ = create_wall_timer(
-    std::chrono::milliseconds(params_.diagnostics_publish_period_ms),
-    std::bind(&Node::publish_diagnostics, this));
+  timer_publish_report_(
+    create_wall_timer(
+      std::chrono::milliseconds(params_.diagnostics_publish_period_ms),
+      std::bind(&Node::publish_diagnostics, this)))
+{
+  param_listener_.setUserCallback(std::bind(&Node::update_params, this, std::placeholders::_1));
+
+  // Set up callback to publish rosgraph when nodes change
+  graph_monitor_.set_graph_change_callback(
+    std::bind(
+      &Node::publish_rosgraph, this,
+      std::placeholders::_1));
 }
 
-rcl_interfaces::msg::SetParametersResult Node::on_parameter_event(
-  const std::vector<rclcpp::Parameter> & /* parameters */)
+void Node::update_params(const rosgraph_monitor::Params & params)
 {
-  rcl_interfaces::msg::SetParametersResult result;
-  result.successful = true;
-
-  if (!param_listener_) {
-    return result;
-  } else if (param_listener_->is_old(params_)) {
-    params_ = param_listener_->get_params();
-  } else {
-    RCLCPP_WARN(get_logger(), "Received parameter callback, but parameters weren't outdated");
-    result.successful = false;
-    return result;
-  }
-
-  on_new_params();
-  return result;
-}
-
-void Node::on_new_params()
-{
+  params_ = params;
   graph_monitor_.config() = create_graph_monitor_config(params_);
 }
+
+std::shared_future<void> Node::query_params(
+  const std::string & node_name,
+  std::function<void(const rcl_interfaces::msg::ListParametersResult &)> callback)
+{
+  auto param_client = std::make_shared<rclcpp::AsyncParametersClient>(
+    this->get_node_base_interface(),
+    this->get_node_topics_interface(),
+    this->get_node_graph_interface(),
+    this->get_node_services_interface(),
+    node_name
+  );
+
+  return std::async(
+    std::launch::async,
+    [param_client, node_name, callback]() -> void {
+      bool params_received = false;
+      while (!params_received && rclcpp::ok()) {
+        if (!param_client->wait_for_service(std::chrono::seconds(SERVICE_TIMEOUT_S))) {
+          RCLCPP_WARN(
+            rclcpp::get_logger("rosgraph_monitor"),
+            "Parameter service for node %s not available, retrying in %d seconds",
+            node_name.c_str(), SERVICE_TIMEOUT_S);
+          rclcpp::sleep_for(std::chrono::seconds(SERVICE_TIMEOUT_S));
+          continue;
+        }
+
+        auto list_parameters = param_client->list_parameters({}, 0);
+
+        if (list_parameters.wait_for(std::chrono::seconds(SERVICE_TIMEOUT_S)) !=
+        std::future_status::ready)
+        {
+          RCLCPP_WARN(
+            rclcpp::get_logger("rosgraph_monitor"),
+            "Parameter query for node %s timed out, retrying in %d seconds", node_name.c_str(),
+            SERVICE_TIMEOUT_S);
+          rclcpp::sleep_for(std::chrono::seconds(SERVICE_TIMEOUT_S));
+          continue;
+        }
+
+        params_received = true;
+        callback(list_parameters.get());
+      }
+    });
+}
+
 
 void Node::on_topic_statistics(const rosgraph_monitor_msgs::msg::TopicStatistics::SharedPtr msg)
 {
@@ -120,29 +159,18 @@ void Node::on_topic_statistics(const rosgraph_monitor_msgs::msg::TopicStatistics
 
 void Node::publish_diagnostics()
 {
-  auto diagnostic_array = graph_monitor_.evaluate();
+  auto diagnostic_array = std::make_unique<diagnostic_msgs::msg::DiagnosticArray>();
+  diagnostic_array->header.stamp = get_clock()->now();
+  diagnostic_array->header.frame_id = "rosgraph_monitor";
 
-  // TODO(ek) probably possible & cleaner to implement using DiagnosticAggregator with Analyzers
-  // Evaluate all diagnostics into final aggregated set for reporting
-  for (const auto & status : diagnostic_array->status) {
-    if (graph_analyzer_.match(status.name)) {
-      auto item = std::make_shared<diagnostic_aggregator::StatusItem>(&status);
-      graph_analyzer_.analyze(item);
-    }
-  }
-  auto agg_statuses = graph_analyzer_.report();
+  graph_monitor_.evaluate(diagnostic_array->status);
 
-  // Evaluate aggregated diagnostics into one single toplevel status "result"
-  auto diagnostic_toplevel = *agg_statuses[0];
-  diagnostic_msgs::msg::DiagnosticArray diagnostic_agg;
-  diagnostic_agg.header.stamp = get_clock()->now();
-  for (const auto & status : agg_statuses) {
-    diagnostic_agg.status.push_back(*status);
-  }
-  // Publish both the aggregated statuses and the result
-  pub_diagnostic_agg_->publish(diagnostic_agg);
-  pub_diagnostic_toplevel_->publish(diagnostic_toplevel);
   pub_diagnostics_->publish(std::move(diagnostic_array));
+}
+
+void Node::publish_rosgraph(rosgraph_monitor_msgs::msg::Graph rosgraph_msg)
+{
+  pub_rosgraph_->publish(std::move(rosgraph_msg));
 }
 
 }  // namespace rosgraph_monitor
