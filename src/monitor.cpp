@@ -14,6 +14,13 @@
 
 #include "rosgraph_monitor/monitor.hpp"
 
+#include <cstdio>
+#include <functional>
+#include <string>
+#include <utility>
+#include <vector>
+#include <memory>
+
 #include "rclcpp/logging.hpp"
 
 
@@ -83,6 +90,55 @@ std::string gid_to_str(const RosRmwGid & gid)
   return gid_to_str(&gid[0]);
 }
 
+void convert_maybe_inifite_durations(
+  const rclcpp::Duration & duration,
+  builtin_interfaces::msg::Duration & msg_duration)
+{
+  auto rmw_time = duration.to_rmw_time();
+  if (rmw_time_equal(rmw_time, RMW_DURATION_INFINITE) ||
+    rmw_time_equal(rmw_time, RMW_DURATION_UNSPECIFIED))
+  {
+    msg_duration.sec = 0;
+    msg_duration.nanosec = 0;
+  } else {
+    msg_duration.sec = rmw_time.sec;
+    msg_duration.nanosec = rmw_time.nsec;
+  }
+}
+
+rosgraph_monitor_msgs::msg::QosProfile to_msg(
+  const rclcpp::QoS & qos_profile)
+{
+  rosgraph_monitor_msgs::msg::QosProfile qos_msg;
+
+  qos_msg.history = static_cast<uint8_t>(qos_profile.history());
+  qos_msg.reliability = static_cast<uint8_t>(qos_profile.reliability());
+  qos_msg.durability = static_cast<uint8_t>(qos_profile.durability());
+  qos_msg.liveliness = static_cast<uint8_t>(qos_profile.liveliness());
+
+  qos_msg.depth = qos_profile.depth();
+  // Convert Duration fields - handle infinite durations
+  convert_maybe_inifite_durations(qos_profile.deadline(), qos_msg.deadline);
+  convert_maybe_inifite_durations(qos_profile.lifespan(), qos_msg.lifespan);
+  convert_maybe_inifite_durations(
+    qos_profile.liveliness_lease_duration(), qos_msg.liveliness_lease_duration);
+
+  return qos_msg;
+}
+
+rcl_interfaces::msg::ParameterDescriptor RosGraphMonitor::ParameterTracking::to_msg() const
+{
+  rcl_interfaces::msg::ParameterDescriptor param_msg;
+  param_msg.name = name;
+  // TODO(troy): Actual type info will be populated in future PR
+  param_msg.type = rcl_interfaces::msg::ParameterType::PARAMETER_NOT_SET;
+  return param_msg;
+}
+
+
+RosGraphMonitor::NodeTracking::NodeTracking(const std::string & name)
+: name(name) {}
+
 RosGraphMonitor::EndpointTracking::EndpointTracking(
   const std::string & topic_name,
   const rclcpp::TopicEndpointInfo & info,
@@ -96,16 +152,28 @@ RosGraphMonitor::EndpointTracking::EndpointTracking(
 {
 }
 
+rosgraph_monitor_msgs::msg::Topic RosGraphMonitor::EndpointTracking::to_msg()
+{
+  rosgraph_monitor_msgs::msg::Topic topic_msg;
+  topic_msg.name = topic_name;
+  topic_msg.type = info.topic_type();
+  topic_msg.qos = rosgraph_monitor::to_msg(info.qos_profile());
+  return topic_msg;
+}
+
 RosGraphMonitor::RosGraphMonitor(
   rclcpp::node_interfaces::NodeGraphInterface::SharedPtr node_graph,
   std::function<rclcpp::Time()> now_fn,
   rclcpp::Logger logger,
-  GraphMonitorConfiguration config)
+  QueryParams query_params,
+  GraphMonitorConfiguration config
+)
 : config_(config),
   now_fn_(now_fn),
   node_graph_(node_graph),
   logger_(logger),
-  graph_change_event_(node_graph->get_graph_event())
+  graph_change_event_(node_graph->get_graph_event()),
+  query_params_(query_params)
 {
   update_graph();
   watch_thread_ = std::thread(std::bind(&RosGraphMonitor::watch_for_updates, this));
@@ -118,6 +186,9 @@ RosGraphMonitor::~RosGraphMonitor()
   graph_change_event_->set();
   node_graph_->notify_shutdown();
   update_event_.set();
+
+  params_futures.clear();
+
   watch_thread_.join();
 }
 
@@ -158,9 +229,13 @@ void RosGraphMonitor::track_node_updates(
       continue;
     }
 
-    auto [it, inserted] = nodes_.emplace(node_name, NodeTracking{});
+    NodeTracking tracking{node_name};
+    auto [it, inserted] = nodes_.emplace(
+      node_name, tracking);
+
     if (inserted) {
       RCLCPP_DEBUG(logger_, "New node: %s", node_name.c_str());
+      query_node_parameters(node_name);
     } else {
       NodeTracking & tracking = it->second;
       tracking.stale = false;
@@ -168,6 +243,7 @@ void RosGraphMonitor::track_node_updates(
         RCLCPP_INFO(logger_, "Node %s came back", node_name.c_str());
         tracking.missing = false;
         returned_nodes_.insert(node_name);
+        query_node_parameters(node_name);
       }
     }
   }
@@ -178,6 +254,11 @@ void RosGraphMonitor::track_node_updates(
       tracking.missing = true;
       returned_nodes_.erase(node_name);
     }
+  }
+
+  // Call graph change callback if set
+  if (graph_change_callback_) {
+    graph_change_callback_();
   }
 }
 
@@ -348,70 +429,71 @@ void RosGraphMonitor::track_endpoint_updates(const TopicsToTypes & observed_topi
   }
 }
 
-std::unique_ptr<diagnostic_msgs::msg::DiagnosticArray> RosGraphMonitor::evaluate()
+void RosGraphMonitor::evaluate(std::vector<diagnostic_msgs::msg::DiagnosticStatus> & status)
 {
-  auto now = now_fn_();
-  auto msg = std::make_unique<diagnostic_msgs::msg::DiagnosticArray>();
-  msg->header.stamp = now;
-
   using diagnostic_msgs::msg::DiagnosticStatus;
 
+  auto now = now_fn_();
+
   // Nodes
-  for (const auto & [node_name, node_info] : nodes_) {
-    if (node_info.missing) {
-      if (match_any_prefixes(config_.nodes.warn_only_prefixes, node_name)) {
-        msg->status.push_back(
-          statusMsg(
-            DiagnosticStatus::WARN,
-            "Optional node missing: " + node_name,
-            "Node::" + node_name));
-      } else {
-        msg->status.push_back(
-          statusMsg(
-            DiagnosticStatus::ERROR,
-            "Required node missing: " + node_name,
-            "Node::" + node_name));
+  {
+    diagnostic_updater::DiagnosticStatusWrapper nodes_status;
+    statusWrapper(nodes_status, DiagnosticStatus::OK, "Nodes OK", "nodes");
+    size_t missing_optional_nodes = 0;
+    size_t missing_required_nodes = 0;
+    for (const auto & [node_name, node_info] : nodes_) {
+      if (node_info.missing) {
+        if (match_any_prefixes(config_.nodes.warn_only_prefixes, node_name)) {
+          nodes_status.add("Optional node missing", node_name);
+          missing_optional_nodes++;
+        } else {
+          nodes_status.add("Required node missing", node_name);
+          missing_required_nodes++;
+        }
       }
     }
-  }
-  for (const std::string & node_name : returned_nodes_) {
-    msg->status.push_back(
-      statusMsg(
-        DiagnosticStatus::OK,
-        "Node OK: " + node_name,
-        "Node::" + node_name));
+    for (const std::string & node_name : returned_nodes_) {
+      nodes_status.addf("Node came back: %s", node_name.c_str());
+    }
+    if (missing_required_nodes > 0) {
+      nodes_status.summaryf(
+        DiagnosticStatus::ERROR, "%d required node(s) missing.", missing_required_nodes);
+    }
+    if (missing_optional_nodes > 0) {
+      nodes_status.mergeSummaryf(
+        DiagnosticStatus::WARN, "%d optional node(s) missing.", missing_optional_nodes);
+    }
+    status.push_back(nodes_status);
   }
 
   // Continuity
-  for (const auto & [topic_name, counts] : topic_endpoint_counts_) {
-    if (counts.pubs > 0 && subs_with_no_pubs_.erase(topic_name) > 0) {
-      msg->status.push_back(
-        statusMsg(
-          DiagnosticStatus::OK,
-          "Dead sink: cleared. Topic now has publisher(s)",
-          "Continuity::" + topic_name));
+  {
+    diagnostic_updater::DiagnosticStatusWrapper continuity_status;
+    statusWrapper(continuity_status, DiagnosticStatus::OK, "Graph continuity OK", "continuity");
+    for (const auto & [topic_name, counts] : topic_endpoint_counts_) {
+      if (counts.pubs > 0 && subs_with_no_pubs_.erase(topic_name) > 0) {
+        continuity_status.add("Dead sink cleared. Topic now has publisher(s).", topic_name);
+      }
+      if (counts.subs > 0 && pubs_with_no_subs_.erase(topic_name) > 0) {
+        continuity_status.add("Leaf topic cleared. Topic now has subscriber(s).", topic_name);
+      }
     }
-    if (counts.subs > 0 && pubs_with_no_subs_.erase(topic_name) > 0) {
-      msg->status.push_back(
-        statusMsg(
-          DiagnosticStatus::OK,
-          "Leaf topic: cleared. Topic now has subscriber(s)",
-          "Continuity::" + topic_name));
+    size_t continuity_issues = 0;
+    for (const auto & topic_name : pubs_with_no_subs_) {
+      continuity_status.add("Leaf topic (No subscriptions): Topic", topic_name);
+      continuity_issues++;
     }
-  }
-  for (const auto & topic_name : pubs_with_no_subs_) {
-    msg->status.push_back(
-      statusMsg(
+    for (const auto & topic_name : subs_with_no_pubs_) {
+      continuity_status.add("Dead sink (No publishers): Topic", topic_name);
+      continuity_issues++;
+    }
+    if (continuity_issues > 0) {
+      continuity_status.summaryf(
         DiagnosticStatus::WARN,
-        "Leaf topic (No subscriptions)",
-        "Continuity::" + topic_name));
-  }
-  for (const auto & topic_name : subs_with_no_pubs_) {
-    msg->status.push_back(
-      statusMsg(
-        DiagnosticStatus::WARN,
-        "Dead sink (No publishers)",
-        "Continuity::" + topic_name));
+        "%d continuity issues detected.",
+        continuity_issues);
+    }
+    status.push_back(continuity_status);
   }
 
   // Frequency
@@ -419,69 +501,93 @@ std::unique_ptr<diagnostic_msgs::msg::DiagnosticArray> RosGraphMonitor::evaluate
       return rmw_time_equal(dur.to_rmw_time(), RMW_DURATION_INFINITE) ||
              rmw_time_equal(dur.to_rmw_time(), RMW_DURATION_UNSPECIFIED);
     };
+  {
+    diagnostic_updater::DiagnosticStatusWrapper pub_freq_status;
+    statusWrapper(
+      pub_freq_status, DiagnosticStatus::OK, "Publish frequencies OK", "publish_frequency");
 
-  for (const auto & [gid, tracking] : publishers_) {
-    auto deadline = tracking.info.qos_profile().deadline();
-    const std::string subname = "PublishFrequency::" + tracking.topic_name;
-    bool stale = (now - tracking.last_stats_timestamp) > config_.topic_statistics.stale_timeout;
-    if (deadline_not_set(deadline)) {
-      // No deadline, don't care
-    } else if (stale) {
-      // Haven't received topic statistics recently enough, likely this means it's not running
-      msg->status.push_back(
-        statusMsg(
-          DiagnosticStatus::ERROR,
-          "Stale topic statistics for publisher with deadline",
-          subname));
-    } else if (!tracking.period_stat.has_value()) {
-      // Not stale yet, but also not yet received statistics info. Just waiting.
-    } else if (!topic_period_ok(*tracking.period_stat, deadline)) {
-      // Have received topic stats and it isn't in good range
-      msg->status.push_back(
-        statusMsg(
-          DiagnosticStatus::WARN,
-          "Publisher sending slower than promised deadline",
-          subname));
-    } else {
-      msg->status.push_back(
-        statusMsg(
-          DiagnosticStatus::OK,
-          "Publisher send frequency acceptable",
-          subname));
-    }
-  }
-  for (const auto & [gid, tracking] : subscriptions_) {
-    auto deadline = tracking.info.qos_profile().deadline();
-    const std::string subname = "ReceiveFrequency::" + tracking.topic_name;
-    bool stale = (now - tracking.last_stats_timestamp) > config_.topic_statistics.stale_timeout;
-    if (deadline_not_set(deadline)) {
-      // No deadline, don't care
-    } else if (stale) {
-      // Haven't received topic statistics recently enough, likely this means it's not running
-      msg->status.push_back(
-        statusMsg(
-          DiagnosticStatus::ERROR,
-          "Stale topic statistics for subscription with deadline",
-          subname));
-    } else if (!tracking.period_stat.has_value()) {
-      // Not stale yet, but also not yet received statistics info. Just waiting.
-    } else if (!topic_period_ok(*tracking.period_stat, deadline)) {
-      // Have received topic stats and it isn't in good range
-      msg->status.push_back(
-        statusMsg(
-          DiagnosticStatus::WARN,
-          "Subscription receiving slower than requested deadline",
-          subname));
-    } else {
-      msg->status.push_back(
-        statusMsg(
-          DiagnosticStatus::OK,
-          "Subscription receive frequency acceptable",
-          subname));
-    }
-  }
+    size_t pub_freq_errors = 0;
+    size_t pub_freq_warns = 0;
+    for (const auto & [gid, tracking] : publishers_) {
+      auto deadline = tracking.info.qos_profile().deadline();
+      const std::string & topic = tracking.topic_name;
+      bool stale = (now - tracking.last_stats_timestamp) > config_.topic_statistics.stale_timeout;
 
-  return msg;
+      bool no_deadline = deadline_not_set(deadline);
+      bool ignore_deadline = config_.topic_statistics.ignore_topics.count(topic) > 0;
+      bool mandatory_deadline = config_.topic_statistics.mandatory_topics.count(topic) > 0;
+      bool deadline_not_required = (no_deadline && !mandatory_deadline) || ignore_deadline;
+
+      if (deadline_not_required) {
+        // No deadline, don't care
+      } else if (stale) {
+        // Haven't received topic statistics recently enough, likely this means it's not running
+        pub_freq_status.add("Stale topic statistics for publisher with deadline", topic);
+        pub_freq_errors++;
+      } else if (!tracking.period_stat.has_value()) {
+        // Not stale yet, but also not yet received statistics info. Just waiting.
+      } else if (!topic_period_ok(*tracking.period_stat, deadline)) {
+        // Have received topic stats and it isn't in good range
+        pub_freq_status.add("Publisher sending too slowly", topic);
+        pub_freq_warns++;
+      } else {
+        pub_freq_status.add("Publisher frequency OK", topic);
+      }
+    }
+    if (pub_freq_errors > 0) {
+      pub_freq_status.summaryf(
+        DiagnosticStatus::ERROR,
+        "Frequency errors detected.",
+        pub_freq_errors);
+    }
+    if (pub_freq_warns > 0) {
+      pub_freq_status.summaryf(
+        DiagnosticStatus::WARN,
+        "Frequency warnings detected.",
+        pub_freq_warns);
+    }
+    status.push_back(pub_freq_status);
+  }
+  {
+    diagnostic_updater::DiagnosticStatusWrapper sub_freq_status;
+    statusWrapper(
+      sub_freq_status, DiagnosticStatus::OK, "Receive frequencies OK", "receive_frequency");
+    size_t sub_freq_errors = 0;
+    size_t sub_freq_warns = 0;
+    for (const auto & [gid, tracking] : subscriptions_) {
+      auto deadline = tracking.info.qos_profile().deadline();
+      const std::string & topic = tracking.topic_name;
+      bool stale = (now - tracking.last_stats_timestamp) > config_.topic_statistics.stale_timeout;
+      if (deadline_not_set(deadline)) {
+        // No deadline, don't care
+      } else if (stale) {
+        // Haven't received topic statistics recently enough, likely this means it's not running
+        sub_freq_status.add("Stale topic statistics for subscription with deadline", topic);
+        sub_freq_errors++;
+      } else if (!tracking.period_stat.has_value()) {
+        // Not stale yet, but also not yet received statistics info. Just waiting.
+      } else if (!topic_period_ok(*tracking.period_stat, deadline)) {
+        // Have received topic stats and it isn't in good range
+        sub_freq_status.add("Subscription receiving too slowly", topic);
+        sub_freq_warns++;
+      } else {
+        sub_freq_status.add("Subscription receive frequency OK", topic);
+      }
+    }
+    if (sub_freq_errors > 0) {
+      sub_freq_status.summaryf(
+        DiagnosticStatus::ERROR,
+        "Frequency errors detected.",
+        sub_freq_errors);
+    }
+    if (sub_freq_warns > 0) {
+      sub_freq_status.summaryf(
+        DiagnosticStatus::WARN,
+        "Frequency warnings detected.",
+        sub_freq_warns);
+    }
+    status.push_back(sub_freq_status);
+  }
 }
 
 void RosGraphMonitor::watch_for_updates()
@@ -543,20 +649,95 @@ void RosGraphMonitor::on_topic_statistics(const rosgraph_monitor_msgs::msg::Topi
   }
 }
 
-diagnostic_msgs::msg::DiagnosticStatus RosGraphMonitor::statusMsg(
+void RosGraphMonitor::statusWrapper(
+  diagnostic_updater::DiagnosticStatusWrapper & msg,
   uint8_t level,
   const std::string & message,
   const std::string & subname) const
 {
-  diagnostic_msgs::msg::DiagnosticStatus msg;
-  msg.level = level;
+  msg.summary(level, message);
   msg.name = config_.diagnostic_namespace;
   if (!subname.empty()) {
-    msg.name += "::" + subname;
+    msg.name += "/" + subname;
   }
-  msg.message = message;
   msg.hardware_id = "health";
-  return msg;
+}
+
+void RosGraphMonitor::fill_rosgraph_msg(rosgraph_monitor_msgs::msg::Graph & msg)
+{
+  msg.timestamp = now_fn_();
+  msg.nodes.clear();
+
+  RCLCPP_DEBUG(logger_, "EVENT rosgraph message with %zu nodes", nodes_.size());
+
+  for (const auto & [node_name, node_info] : nodes_) {
+    if (ignore_node(node_name) || node_info.missing || node_info.stale) {
+      continue;
+    }
+
+    rosgraph_monitor_msgs::msg::NodeInfo node_msg;
+    node_msg.name = node_name;
+
+    for (const auto & param : node_info.params) {
+      node_msg.parameters.push_back(param.to_msg());
+    }
+
+    // Add publishers for this node
+    for (auto & [gid, tracking] : publishers_) {
+      if (tracking.node_name == node_name) {
+        auto topic_msg = tracking.to_msg();
+        node_msg.publishers.push_back(topic_msg);
+      }
+    }
+
+    // Add subscriptions for this node
+    for (auto & [gid, tracking] : subscriptions_) {
+      if (tracking.node_name == node_name) {
+        auto topic_msg = tracking.to_msg();
+        node_msg.subscriptions.push_back(topic_msg);
+      }
+    }
+    msg.nodes.push_back(node_msg);
+  }
+}
+
+void RosGraphMonitor::set_graph_change_callback(
+  std::function<void(rosgraph_monitor_msgs::msg::Graph &)> callback)
+{
+  graph_change_callback_ = [callback, this]() {
+      rosgraph_monitor_msgs::msg::Graph msg;
+      fill_rosgraph_msg(msg);
+      callback(msg);
+    };
+}
+
+void RosGraphMonitor::query_node_parameters(const std::string & node_name)
+{
+  // Non-blocking async call for parameter query. Hold onto the future to track completion.
+  params_futures[node_name] = query_params_(
+    node_name,
+    [this, node_name_copy = std::string(node_name)](
+      const rcl_interfaces::msg::ListParametersResult & result) {
+      RCLCPP_INFO(
+        logger_, "Got parameters for node %s: %zu", node_name_copy.c_str(),
+        result.names.size());
+      auto it = nodes_.find(node_name_copy);
+      if (it == nodes_.end()) {
+        RCLCPP_WARN(logger_, "Node %s not found in tracking map", node_name_copy.c_str());
+        return;
+      }
+      auto & tracking = it->second;
+      tracking.params.clear();
+      tracking.params.reserve(result.names.size());
+      for (const auto & param_name : result.names) {
+        tracking.params.push_back(
+          ParameterTracking{param_name,
+            rcl_interfaces::msg::ParameterType::PARAMETER_NOT_SET});
+      }
+      if (!tracking.params.empty()) {
+        graph_change_callback_();
+      }
+    });
 }
 
 
