@@ -1,38 +1,36 @@
-# ROS 2 Graph Monitor
+# RMW Stats Shim
 
-The packages in this repository implement application-level health monitoring for a ROS 2 connected graph of nodes.
+Depends on a [modified version of `rmw_implementation`](https://github.com/robograph-project/rmw_implementation) to provide topic statistics calculation within the RMW layer of each node, without having to instrument application code.
 
-The components were originally presented at ROSCon 2024 in "ROS robot health monitoring, the Bonsai approach": https://vimeo.com/1024971769
+This component
+* Wraps & intercepts some RMW API calls
+* Calculates "published period" statistics for every Publisher
+* Calculates "received period" statistics for every Subscription
+* Calculates "take age" statistics for every Subscription
+  * This is the different between publish system timestamp and the time at which `rmw_take` is called, so is the sum of network latency plus executor latency
+* Creates a `/topic_statistics` Publisher for every Node and publishes to it periodically about the statistics from within the node
 
-See each package's README for more detailed information:
-* [rosgraph_monitor](./rosgraph_monitor/) - Component to monitor the ROS graph and publish resulting diagnostics
-* [rosgraph_monitor_msgs](./rosgraph_monitor_msgs/) - Messages for reporting graph monitoring information, namely topic statistics
-* [rmw_stats_shim](./rmw_stats_shim/) - RMW wrapper to efficiently gather and report topic statistics for all nodes
+Key points:
+* Requires no subscriptions, no extra copies, to do statistics on all topics
+* Requires no modification to application code to use
 
-## Release Status
+## Configuration
 
-### Repo-level jobs
+Set the following environment variables before launching a node to configure topic statistics
 
-| Distro | Dev | Doc |
-|--------|-----|-----|
-| Rolling | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Rdev__graph_monitor__ubuntu_noble_amd64)](https://build.ros2.org/job/Rdev__graph_monitor__ubuntu_noble_amd64/) | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Rdoc__graph_monitor__ubuntu_noble_amd64)](https://build.ros2.org/job/Rdoc__graph_monitor__ubuntu_noble_amd64/) |
-| Kilted  | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Kdev__graph_monitor__ubuntu_noble_amd64)](https://build.ros2.org/job/Kdev__graph_monitor__ubuntu_noble_amd64/) | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Kdoc__graph_monitor__ubuntu_noble_amd64)](https://build.ros2.org/job/Kdoc__graph_monitor__ubuntu_noble_amd64/) |
-| Jazzy   | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Jdev__graph_monitor__ubuntu_noble_amd64)](https://build.ros2.org/job/Jdev__graph_monitor__ubuntu_noble_amd64/) | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Jdoc__graph_monitor__ubuntu_noble_amd64)](https://build.ros2.org/job/Jdoc__graph_monitor__ubuntu_noble_amd64/) |
-| Humble  | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Hdev__graph_monitor__ubuntu_jammy_amd64)](https://build.ros2.org/job/Hdev__graph_monitor__ubuntu_jammy_amd64/) | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Hdoc__graph_monitor__ubuntu_jammy_amd64)](https://build.ros2.org/job/Hdoc__graph_monitor__ubuntu_jammy_amd64/) |
+* Required: `RMW_IMPLEMENTATION_WRAPPER=rmw_stats_shim`
+* `ROS_TOPIC_STATISTICS_WINDOW_SIZE` - how many messages to use in rolling buffer for stats (stores only timestamp information, not contents data)
+  * Default: `50`
+* `ROS_TOPIC_STATISTICS_TOPIC_NAME` - name of the topic to publish statistics on
+  * Default: `/topic_statistics`
+* `ROS_TOPIC_STATISTICS_PUBLISH_PERIOD` - Interval in seconds at which to periodically publish stats
+  * Default: `1.0`
 
-### Package-level jobs
+## Usage
 
-| Distro | Pkg | Src | Ubuntu amd64 |
-|--------|-----|-----|--------------|
-| Rolling | rmw_stats_shim        | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Rsrc_uN__rmw_stats_shim__ubuntu_noble__source)](https://build.ros2.org/view/Rsrc_uN/job/Rsrc_uN__rmw_stats_shim__ubuntu_noble__source/) | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Rbin_uN64__rmw_stats_shim__ubuntu_noble_amd64__binary)](https://build.ros2.org/view/Rsrc_uN/job/Rbin_uN64__rmw_stats_shim__ubuntu_noble_amd64__binary/) |
-|         | rosgraph_monitor      | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Rsrc_uN__rosgraph_monitor__ubuntu_noble__source)](https://build.ros2.org/view/Rbin_unv8_uNv8/job/Rsrc_uN__rosgraph_monitor__ubuntu_noble__source/) | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Rbin_uN64__rosgraph_monitor__ubuntu_noble_amd64__binary)](https://build.ros2.org/view/Rbin_unv8_uNv8/job/Rbin_uN64__rosgraph_monitor__ubuntu_noble_amd64__binary/) |
-|         | rosgraph_monitor_msgs | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Rsrc_uN__rosgraph_monitor_msgs__ubuntu_noble__source)](https://build.ros2.org/view/Rsrc_uN/job/Rsrc_uN__rosgraph_monitor_msgs__ubuntu_noble__source/) | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Rbin_uN64__rosgraph_monitor_msgs__ubuntu_noble_amd64__binary)](https://build.ros2.org/view/Rsrc_uN/job/Rbin_uN64__rosgraph_monitor_msgs__ubuntu_noble_amd64__binary/) |
-| Kilted  | rmw_stats_shim        | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Ksrc_uN__rmw_stats_shim__ubuntu_noble__source)](https://build.ros2.org/view/Ksrc_uN/job/Ksrc_uN__rmw_stats_shim__ubuntu_noble__source/) | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Kbin_unv8_uNv8__rmw_stats_shim__ubuntu_noble_arm64__binary)](https://build.ros2.org/view/Kbin_unv8_uNv8/job/Kbin_unv8_uNv8__rmw_stats_shim__ubuntu_noble_arm64__binary/) |
-|         | rosgraph_monitor      | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Ksrc_uN__rosgraph_monitor__ubuntu_noble__source)](https://build.ros2.org/view/Ksrc_uN/job/Ksrc_uN__rosgraph_monitor__ubuntu_noble__source/) | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Kbin_unv8_uNv8__rosgraph_monitor__ubuntu_noble_arm64__binary)](https://build.ros2.org/view/Kbin_unv8_uNv8/job/Kbin_unv8_uNv8__rosgraph_monitor__ubuntu_noble_arm64__binary/) |
-|         | rosgraph_monitor_msgs | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Ksrc_uN__rosgraph_monitor_msgs__ubuntu_noble__source)](https://build.ros2.org/view/Ksrc_uN/job/Ksrc_uN__rosgraph_monitor_msgs__ubuntu_noble__source/) | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Kbin_unv8_uNv8__rosgraph_monitor_msgs__ubuntu_noble_arm64__binary)](https://build.ros2.org/view/Kbin_unv8_uNv8/job/Kbin_unv8_uNv8__rosgraph_monitor_msgs__ubuntu_noble_arm64__binary/) |
-| Jazzy   | rmw_stats_shim        | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Jsrc_uN__rmw_stats_shim__ubuntu_noble__source)](https://build.ros2.org/view/Jsrc_uN/job/Jsrc_uN__rmw_stats_shim__ubuntu_noble__source/) | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Jbin_unv8_uNv8__rmw_stats_shim__ubuntu_noble_arm64__binary)](https://build.ros2.org/view/Jbin_unv8_uNv8/job/Jbin_unv8_uNv8__rmw_stats_shim__ubuntu_noble_arm64__binary/) |
-|         | rosgraph_monitor      | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Jsrc_uN__rosgraph_monitor__ubuntu_noble__source)](https://build.ros2.org/view/Jsrc_uN/job/Jsrc_uN__rosgraph_monitor__ubuntu_noble__source/) | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Jbin_unv8_uNv8__rosgraph_monitor__ubuntu_noble_arm64__binary)](https://build.ros2.org/view/Jbin_unv8_uNv8/job/Jbin_unv8_uNv8__rosgraph_monitor__ubuntu_noble_arm64__binary/) |
-|         | rosgraph_monitor_msgs | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Jsrc_uN__rosgraph_monitor_msgs__ubuntu_noble__source)](https://build.ros2.org/view/Jsrc_uN/job/Jsrc_uN__rosgraph_monitor_msgs__ubuntu_noble__source/) | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Jbin_unv8_uNv8__rosgraph_monitor_msgs__ubuntu_noble_arm64__binary)](https://build.ros2.org/view/Jbin_unv8_uNv8/job/Jbin_unv8_uNv8__rosgraph_monitor_msgs__ubuntu_noble_arm64__binary/) |
-| Humble  | rmw_stats_shim        | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Hsrc_uJ__rmw_stats_shim__ubuntu_jammy__source)](https://build.ros2.org/view/Hsrc_uJ/job/Hsrc_uJ__rmw_stats_shim__ubuntu_jammy__source/) | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Hbin_ujv8_uJv8__rmw_stats_shim__ubuntu_jammy_arm64__binary)](https://build.ros2.org/view/Hbin_ujv8_uJv8/job/Hbin_ujv8_uJv8__rmw_stats_shim__ubuntu_jammy_arm64__binary/) |
-|         | rosgraph_monitor      | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Hsrc_uJ__rosgraph_monitor__ubuntu_jammy__source)](https://build.ros2.org/view/Hsrc_uJ/job/Hsrc_uJ__rosgraph_monitor__ubuntu_jammy__source/) | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Hbin_ujv8_uJv8__rosgraph_monitor__ubuntu_jammy_arm64__binary)](https://build.ros2.org/view/Hbin_ujv8_uJv8/job/Hbin_ujv8_uJv8__rosgraph_monitor__ubuntu_jammy_arm64__binary/) |
-|         | rosgraph_monitor_msgs | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Hsrc_uJ__rosgraph_monitor_msgs__ubuntu_jammy__source)](https://build.ros2.org/view/Hsrc_uJ/job/Hsrc_uJ__rosgraph_monitor_msgs__ubuntu_jammy__source/) | [![Build Status](https://build.ros2.org/buildStatus/icon?job=Hbin_ujv8_uJv8__rosgraph_monitor_msgs__ubuntu_jammy_arm64__binary)](https://build.ros2.org/view/Hbin_ujv8_uJv8/job/Hbin_ujv8_uJv8__rosgraph_monitor_msgs__ubuntu_jammy_arm64__binary/) |
+```
+colcon build --packages-select rmw_implementation rmw_stats_shim
+source install/setup.bash
+export RMW_IMPLEMENTATION_WRAPPER=rmw_stats_shim
+# run any ROS 2 node/launch/etc
+```
