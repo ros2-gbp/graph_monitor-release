@@ -1,0 +1,59 @@
+ros-jazzy-rosgraph-monitor (0.2.3-1noble) noble; urgency=high
+
+
+
+ -- Emerson Knapp <emerson.b.knapp@gmail.com>  Tue, 21 Oct 2025 17:00:00 -0000
+
+ros-jazzy-rosgraph-monitor (0.2.2-1noble) noble; urgency=high
+
+  * Fix release builds (#36 <https://github.com/ros-tooling/graph-monitor/issues/36>)
+    * don't depend on ROS_DISTRO environment variable, instead use detected package versions
+  * Contributors: Emerson Knapp
+
+ -- Emerson Knapp <emerson.b.knapp@gmail.com>  Wed, 15 Oct 2025 17:00:00 -0000
+
+ros-jazzy-rosgraph-monitor (0.2.1-1noble) noble; urgency=high
+
+  * Fix dependency spec in package xmls, for buildfarm fixing (#35 <https://github.com/ros-tooling/graph-monitor/issues/35>)
+  * Contributors: Emerson Knapp
+
+ -- Emerson Knapp <emerson.b.knapp@gmail.com>  Tue, 14 Oct 2025 17:00:00 -0000
+
+ros-jazzy-rosgraph-monitor (0.2.0-1noble) noble; urgency=high
+
+  * Node Parameters on /rosgraph (#26 <https://github.com/ros-tooling/graph-monitor/issues/26>)
+    * Graph monitor asynchronously queries parameter list for each tracked node, to know parameter names in graph representation
+  * Implement publisher/subscriber attributes on /rosgraph (#23 <https://github.com/ros-tooling/graph-monitor/issues/23>)
+    * Includes QoS profile mapping and enums
+  * Publish node info under /rosgraph (#20 <https://github.com/ros-tooling/graph-monitor/issues/20>)
+  * Update package maintainers  (#19 <https://github.com/ros-tooling/graph-monitor/issues/19>)
+    * Update package maintainers and add some author attributions to package.xml
+  * Add useful set of precommit formatters and checks that enhance the ament linting (#21 <https://github.com/ros-tooling/graph-monitor/issues/21>)
+  * Use DiagnosticAggregator instead of custom Analyzer (#16 <https://github.com/ros-tooling/graph-monitor/issues/16>)
+  * Test the rmw_stats_shim topic_statistics in the CI build (#18 <https://github.com/ros-tooling/graph-monitor/issues/18>)
+  * Update package maintainers  (#19 <https://github.com/ros-tooling/graph-monitor/issues/19>)
+    * Update package maintainers and add some author attributions to package.xml
+  * Use new ParamListener usercallback to skip the additional OnSetParametersCallback logic (#13 <https://github.com/ros-tooling/graph-monitor/issues/13>)
+  * Contributors: Emerson Knapp, Troy Gibb
+
+ -- Emerson Knapp <emerson.b.knapp@gmail.com>  Wed, 06 Aug 2025 17:00:00 -0000
+
+ros-jazzy-rosgraph-monitor (0.1.2-1noble) noble; urgency=high
+
+  * Kilted support (#6 <https://github.com/ros-tooling/graph-monitor/issues/6>)
+  * Contributors: Emerson Knapp
+
+ -- Emerson Knapp <emerson.b.knapp@gmail.com>  Sun, 11 May 2025 17:00:00 -0000
+
+ros-jazzy-rosgraph-monitor (0.1.1-1noble) noble; urgency=high
+
+  * Remove telegraf bridge and update some language
+  * RAII initialization of RosgraphMonitor (#12 <https://github.com/ros-tooling/graph-monitor/issues/12>)
+  * Fix build issues with latest generate_parameter_library (#11 <https://github.com/ros-tooling/graph-monitor/issues/11>)
+  * Action CI - support Humble, Jazzy, Rolling (#1 <https://github.com/ros-tooling/graph-monitor/issues/1>)
+  * Initial package setup
+  * Contributors: Emerson Knapp, Troy Gibb, Joshua Whitley
+
+ -- Bonsai Robotics Engineering <emerson.knapp@bonsairobotics.ai>  Tue, 08 Apr 2025 17:00:00 -0000
+
+
