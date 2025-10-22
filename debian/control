@@ -1,0 +1,12 @@
+Source: ros-kilted-rosgraph-monitor-msgs
+Section: misc
+Priority: optional
+Maintainer: Emerson Knapp <emerson.b.knapp@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), ros-kilted-ament-cmake, ros-kilted-ament-lint-auto <!nocheck>, ros-kilted-ament-lint-common <!nocheck>, ros-kilted-builtin-interfaces, ros-kilted-rcl-interfaces, ros-kilted-rosidl-default-generators, ros-kilted-ros-workspace, ros-kilted-rosidl-typesupport-fastrtps-c, ros-kilted-rosidl-typesupport-fastrtps-cpp
+Homepage: 
+Standards-Version: 3.9.2
+
+Package: ros-kilted-rosgraph-monitor-msgs
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-kilted-builtin-interfaces, ros-kilted-rcl-interfaces, ros-kilted-rosidl-default-runtime, ros-kilted-ros-workspace
+Description: Interfaces for reporting observations about the ROS 2 communication graph
