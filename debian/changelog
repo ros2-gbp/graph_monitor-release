@@ -1,0 +1,45 @@
+ros-jazzy-rosgraph-monitor-msgs (0.2.3-1bookworm) bookworm; urgency=high
+
+  * Fix circular dependency (#38 <https://github.com/ros-tooling/graph-monitor/issues/38>)
+  * Contributors: Emerson Knapp
+
+ -- Emerson Knapp <emerson.b.knapp@gmail.com>  Tue, 21 Oct 2025 17:00:00 -0000
+
+ros-jazzy-rosgraph-monitor-msgs (0.2.2-1bookworm) bookworm; urgency=high
+
+  * Fix release builds (#36 <https://github.com/ros-tooling/graph-monitor/issues/36>)
+    * add missing dependencies in package.xml
+  * Contributors: Emerson Knapp
+
+ -- Emerson Knapp <emerson.b.knapp@gmail.com>  Wed, 15 Oct 2025 17:00:00 -0000
+
+ros-jazzy-rosgraph-monitor-msgs (0.2.1-1bookworm) bookworm; urgency=high
+
+  * Fix dependency spec in package xmls, for buildfarm fixing (#35 <https://github.com/ros-tooling/graph-monitor/issues/35>)
+  * Contributors: Emerson Knapp
+
+ -- Emerson Knapp <emerson.b.knapp@gmail.com>  Tue, 14 Oct 2025 17:00:00 -0000
+
+ros-jazzy-rosgraph-monitor-msgs (0.2.0-1bookworm) bookworm; urgency=high
+
+  * Add parameters to message definition (#26 <https://github.com/ros-tooling/graph-monitor/issues/26>)
+  * Add Topic.msg and QosProfile.msg (#23 <https://github.com/ros-tooling/graph-monitor/issues/23>)
+  * Add NodeInfo.msg and Graph.msg (#20 <https://github.com/ros-tooling/graph-monitor/issues/20>)
+  * Contributors: Emerson Knapp, Troy Gibb
+
+ -- Emerson Knapp <emerson.b.knapp@gmail.com>  Wed, 06 Aug 2025 17:00:00 -0000
+
+ros-jazzy-rosgraph-monitor-msgs (0.1.2-1bookworm) bookworm; urgency=high
+
+
+
+ -- Emerson Knapp <emerson.b.knapp@gmail.com>  Sun, 11 May 2025 17:00:00 -0000
+
+ros-jazzy-rosgraph-monitor-msgs (0.1.1-1bookworm) bookworm; urgency=high
+
+  * Initial package setup
+  * Contributors: Emerson Knapp
+
+ -- Emerson Knapp <emerson.knapp@bonsairobotics.ai>  Tue, 08 Apr 2025 17:00:00 -0000
+
+
