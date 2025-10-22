@@ -1,0 +1,33 @@
+ros-kilted-rmw-stats-shim (0.2.3-1bookworm) bookworm; urgency=high
+
+  * Fix circular dependency (#38 <https://github.com/ros-tooling/graph-monitor/issues/38>)
+  * Contributors: Emerson Knapp
+
+ -- Emerson Knapp <emerson.b.knapp@gmail.com>  Tue, 21 Oct 2025 17:00:00 -0000
+
+ros-kilted-rmw-stats-shim (0.2.2-1bookworm) bookworm; urgency=high
+
+
+
+ -- Emerson Knapp <emerson.b.knapp@gmail.com>  Wed, 15 Oct 2025 17:00:00 -0000
+
+ros-kilted-rmw-stats-shim (0.2.1-1bookworm) bookworm; urgency=high
+
+
+
+ -- Emerson Knapp <emerson.b.knapp@gmail.com>  Tue, 14 Oct 2025 17:00:00 -0000
+
+ros-kilted-rmw-stats-shim (0.1.2-1bookworm) bookworm; urgency=high
+
+
+
+ -- Bonsai Robotics Engineering <emerson.knapp@bonsairobotics.ai>  Sun, 11 May 2025 17:00:00 -0000
+
+ros-kilted-rmw-stats-shim (0.1.1-1bookworm) bookworm; urgency=high
+
+  * Initial package setup
+  * Contributors: Emerson Knapp
+
+ -- Bonsai Robotics Engineering <emerson.knapp@bonsairobotics.ai>  Tue, 08 Apr 2025 17:00:00 -0000
+
+
