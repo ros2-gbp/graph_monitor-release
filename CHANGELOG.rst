@@ -2,6 +2,9 @@
 Changelog for package rosgraph_monitor
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+0.2.3 (2025-10-22)
+------------------
+
 0.2.2 (2025-10-16)
 ------------------
 * Fix release builds (`#36 <https://github.com/ros-tooling/graph-monitor/issues/36>`_)
