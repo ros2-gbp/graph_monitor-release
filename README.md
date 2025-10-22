@@ -1,3 +1,32 @@
+## graph_monitor (jazzy) - 0.2.3-1
+
+The packages in the `graph_monitor` repository were released into the `jazzy` distro by running `/Users/emerson/dev/ros/graph-monitor/.venv/bin/bloom-release --rosdistro jazzy graph_monitor -y` on `Wed, 22 Oct 2025 08:49:06 -0000`
+
+These packages were released:
+- `rmw_stats_shim`
+- `rosgraph_monitor`
+- `rosgraph_monitor_msgs`
+
+These packages were explicitly ignored:
+- `rosgraph_monitor_test`
+
+Version of package(s) in repository `graph_monitor`:
+
+- upstream repository: https://github.com/ros-tooling/graph-monitor.git
+- release repository: https://github.com/ros2-gbp/graph_monitor-release.git
+- rosdistro version: `0.2.2-1`
+- old version: `0.2.2-1`
+- new version: `0.2.3-1`
+
+Versions of tools used:
+
+- bloom version: `0.13.0`
+- catkin_pkg version: `1.1.0`
+- rosdep version: `0.26.0`
+- rosdistro version: `1.0.1`
+- vcstools version: `0.1.42`
+
+
 ## graph_monitor (kilted) - 0.2.3-1
 
 The packages in the `graph_monitor` repository were released into the `kilted` distro by running `/Users/emerson/dev/ros/graph-monitor/.venv/bin/bloom-release --rosdistro kilted graph_monitor -y` on `Wed, 22 Oct 2025 08:46:22 -0000`
