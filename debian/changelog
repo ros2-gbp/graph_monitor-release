@@ -1,0 +1,33 @@
+ros-rolling-rmw-stats-shim (0.2.3-2resolute) resolute; urgency=high
+
+  * Fix circular dependency (#38 <https://github.com/ros-tooling/graph-monitor/issues/38>)
+  * Contributors: Emerson Knapp
+
+ -- Emerson Knapp <emerson.b.knapp@gmail.com>  Wed, 22 Oct 2025 05:00:00 -0000
+
+ros-rolling-rmw-stats-shim (0.2.2-2resolute) resolute; urgency=high
+
+
+
+ -- Emerson Knapp <emerson.b.knapp@gmail.com>  Thu, 16 Oct 2025 05:00:00 -0000
+
+ros-rolling-rmw-stats-shim (0.2.1-2resolute) resolute; urgency=high
+
+
+
+ -- Emerson Knapp <emerson.b.knapp@gmail.com>  Wed, 15 Oct 2025 05:00:00 -0000
+
+ros-rolling-rmw-stats-shim (0.1.2-2resolute) resolute; urgency=high
+
+
+
+ -- Emerson Knapp <emerson.b.knapp@gmail.com>  Mon, 12 May 2025 05:00:00 -0000
+
+ros-rolling-rmw-stats-shim (0.1.1-2resolute) resolute; urgency=high
+
+  * Initial package setup
+  * Contributors: Emerson Knapp
+
+ -- Emerson Knapp <emerson.b.knapp@gmail.com>  Wed, 09 Apr 2025 05:00:00 -0000
+
+
