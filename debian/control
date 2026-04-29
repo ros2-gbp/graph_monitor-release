@@ -1,0 +1,12 @@
+Source: ros-lyrical-rosgraph-monitor
+Section: misc
+Priority: optional
+Maintainer: Emerson Knapp <emerson.b.knapp@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), ros-lyrical-ament-cmake, ros-lyrical-ament-cmake-gmock <!nocheck>, ros-lyrical-ament-lint-auto <!nocheck>, ros-lyrical-ament-lint-common <!nocheck>, ros-lyrical-diagnostic-msgs, ros-lyrical-diagnostic-updater, ros-lyrical-generate-parameter-library, ros-lyrical-launch-ros <!nocheck>, ros-lyrical-launch-testing-ament-cmake <!nocheck>, ros-lyrical-rclcpp, ros-lyrical-rclcpp-components, ros-lyrical-rmw-implementation <!nocheck>, ros-lyrical-rmw-stats-shim <!nocheck>, ros-lyrical-rosgraph-monitor-msgs, ros-lyrical-ros-workspace
+Homepage: https://index.ros.org/p/rosgraph_monitor/#lyrical
+Standards-Version: 3.9.2
+
+Package: ros-lyrical-rosgraph-monitor
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-lyrical-diagnostic-aggregator, ros-lyrical-diagnostic-msgs, ros-lyrical-diagnostic-updater, ros-lyrical-rclcpp, ros-lyrical-rclcpp-components, ros-lyrical-rosgraph-monitor-msgs, ros-lyrical-ros-workspace
+Description: Monitors the ROS graph to detect error conditions
