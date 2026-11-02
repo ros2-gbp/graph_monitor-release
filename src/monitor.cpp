@@ -1,31 +1,22 @@
-// Copyright 2024, Bonsai Robotics, Inc - All Rights Reserved
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-FileCopyrightText: 2024 Bonsai Robotics, Inc.
+// SPDX-License-Identifier: Apache-2.0
 
 #include "rosgraph_monitor/monitor.hpp"
 
+#include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <functional>
+#include <memory>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
-#include <memory>
 
 #include "rclcpp/logging.hpp"
 
-
-std::size_t std::hash<RosRmwGid>::operator()(
-  const RosRmwGid & id) const noexcept
+std::size_t std::hash<RosRmwGid>::operator()(const RosRmwGid & id) const noexcept
 {
   constexpr std::size_t u64s = sizeof(uint64_t);
   static_assert(sizeof(RosRmwGid) == (3 * u64s) || sizeof(RosRmwGid) == (2 * u64s));
@@ -56,6 +47,10 @@ std::size_t std::hash<std::pair<std::string, std::string>>::operator()(
 namespace
 {
 
+using ParamQueries = rosgraph_monitor::QueryQueue<std::vector<std::string>>;
+using DescriptorQueries = rosgraph_monitor::QueryQueue<std::vector<rcl_interfaces::msg::ParameterDescriptor>>;
+using ValueQueries = rosgraph_monitor::QueryQueue<rosgraph_monitor::ValueResponse>;
+
 bool match_any_prefixes(const std::vector<std::string> & prefixes, const std::string & value)
 {
   for (const std::string & prefix : prefixes) {
@@ -66,8 +61,22 @@ bool match_any_prefixes(const std::vector<std::string> & prefixes, const std::st
   return false;
 }
 
-}  // namespace
+/// @return Whether any of `descriptors` is named `name`.
+bool named_among(const std::vector<rcl_interfaces::msg::ParameterDescriptor> & descriptors, const std::string & name)
+{
+  return std::any_of(
+    descriptors.begin(), descriptors.end(), [&name](const auto & descriptor) { return descriptor.name == name; });
+}
 
+/// @brief Erase every recorded value whose name is no longer among the recorded descriptors.
+void erase_unnamed_values(rosgraph_monitor::RecordedParameters & params)
+{
+  for (auto it = params.values.begin(); it != params.values.end();) {
+    it = named_among(params.descriptors, it->first) ? std::next(it) : params.values.erase(it);
+  }
+}
+
+}  // namespace
 
 namespace rosgraph_monitor
 {
@@ -90,14 +99,79 @@ std::string gid_to_str(const RosRmwGid & gid)
   return gid_to_str(&gid[0]);
 }
 
+std::vector<rcl_interfaces::msg::ParameterDescriptor> reconcile_descriptors(
+  const std::vector<rcl_interfaces::msg::ParameterDescriptor> & recorded,
+  const std::vector<std::string> & names,
+  const std::unordered_set<std::string> & keep)
+{
+  std::vector<rcl_interfaces::msg::ParameterDescriptor> descriptors;
+  descriptors.reserve(names.size());
+  for (const auto & name : names) {
+    const auto known = std::find_if(
+      recorded.begin(), recorded.end(), [&name](const auto & descriptor) { return descriptor.name == name; });
+    if (known != recorded.end()) {
+      descriptors.push_back(*known);
+      continue;
+    }
+    rcl_interfaces::msg::ParameterDescriptor descriptor;
+    descriptor.name = name;
+    descriptor.type = rcl_interfaces::msg::ParameterType::PARAMETER_NOT_SET;
+    descriptors.push_back(std::move(descriptor));
+  }
+  for (const auto & descriptor : recorded) {
+    if (keep.count(descriptor.name) != 0 && !named_among(descriptors, descriptor.name)) {
+      descriptors.push_back(descriptor);
+    }
+  }
+  return descriptors;
+}
+
+std::vector<rcl_interfaces::msg::ParameterDescriptor> merge_descriptors(
+  const std::vector<rcl_interfaces::msg::ParameterDescriptor> & recorded,
+  const std::vector<rcl_interfaces::msg::ParameterDescriptor> & described)
+{
+  std::vector<rcl_interfaces::msg::ParameterDescriptor> merged;
+  merged.reserve(recorded.size());
+  for (const auto & descriptor : recorded) {
+    const auto found = std::find_if(described.begin(), described.end(), [&descriptor](const auto & candidate) {
+      return candidate.name == descriptor.name;
+    });
+    merged.push_back(found != described.end() ? *found : descriptor);
+  }
+  return merged;
+}
+
+std::unordered_map<std::string, rcl_interfaces::msg::ParameterValue> pair_values(const ValueResponse & response)
+{
+  const auto & [names, values] = response;
+  std::unordered_map<std::string, rcl_interfaces::msg::ParameterValue> paired;
+  for (size_t index = 0; index < names.size() && index < values.size(); index++) {
+    paired.emplace(names[index], values[index]);
+  }
+  return paired;
+}
+
+std::vector<rcl_interfaces::msg::ParameterValue> parallel_values(
+  const std::vector<rcl_interfaces::msg::ParameterDescriptor> & descriptors,
+  const std::unordered_map<std::string, rcl_interfaces::msg::ParameterValue> & values)
+{
+  std::vector<rcl_interfaces::msg::ParameterValue> parallel;
+  parallel.reserve(descriptors.size());
+  for (const auto & descriptor : descriptors) {
+    const auto value = values.find(descriptor.name);
+    if (value == values.end()) {
+      return {};
+    }
+    parallel.push_back(value->second);
+  }
+  return parallel;
+}
+
 void convert_maybe_inifite_durations(
-  const rclcpp::Duration & duration,
-  builtin_interfaces::msg::Duration & msg_duration)
+  const rclcpp::Duration & duration, builtin_interfaces::msg::Duration & msg_duration)
 {
   auto rmw_time = duration.to_rmw_time();
-  if (rmw_time_equal(rmw_time, RMW_DURATION_INFINITE) ||
-    rmw_time_equal(rmw_time, RMW_DURATION_UNSPECIFIED))
-  {
+  if (rmw_time_equal(rmw_time, RMW_DURATION_INFINITE) || rmw_time_equal(rmw_time, RMW_DURATION_UNSPECIFIED)) {
     msg_duration.sec = 0;
     msg_duration.nanosec = 0;
   } else {
@@ -106,10 +180,9 @@ void convert_maybe_inifite_durations(
   }
 }
 
-rosgraph_monitor_msgs::msg::QosProfile to_msg(
-  const rclcpp::QoS & qos_profile)
+rosgraph_msgs::msg::QoSProfile to_msg(const rclcpp::QoS & qos_profile)
 {
-  rosgraph_monitor_msgs::msg::QosProfile qos_msg;
+  rosgraph_msgs::msg::QoSProfile qos_msg;
 
   qos_msg.history = static_cast<uint8_t>(qos_profile.history());
   qos_msg.reliability = static_cast<uint8_t>(qos_profile.reliability());
@@ -120,43 +193,50 @@ rosgraph_monitor_msgs::msg::QosProfile to_msg(
   // Convert Duration fields - handle infinite durations
   convert_maybe_inifite_durations(qos_profile.deadline(), qos_msg.deadline);
   convert_maybe_inifite_durations(qos_profile.lifespan(), qos_msg.lifespan);
-  convert_maybe_inifite_durations(
-    qos_profile.liveliness_lease_duration(), qos_msg.liveliness_lease_duration);
+  convert_maybe_inifite_durations(qos_profile.liveliness_lease_duration(), qos_msg.liveliness_lease_duration);
 
   return qos_msg;
 }
 
-rcl_interfaces::msg::ParameterDescriptor RosGraphMonitor::ParameterTracking::to_msg() const
-{
-  rcl_interfaces::msg::ParameterDescriptor param_msg;
-  param_msg.name = name;
-  // TODO(troy): Actual type info will be populated in future PR
-  param_msg.type = rcl_interfaces::msg::ParameterType::PARAMETER_NOT_SET;
-  return param_msg;
-}
-
-
 RosGraphMonitor::NodeTracking::NodeTracking(const std::string & name)
-: name(name) {}
+: name(name)
+{}
 
 RosGraphMonitor::EndpointTracking::EndpointTracking(
-  const std::string & topic_name,
-  const rclcpp::TopicEndpointInfo & info,
-  const rclcpp::Time & now)
-: topic_name(topic_name),
-  node_name(info.node_namespace() == "/" ?
-    info.node_namespace() + info.node_name() :
-    info.node_namespace() + "/" + info.node_name()),
-  info(info),
-  last_stats_timestamp(now)
+  const std::string & topic_name, const rclcpp::TopicEndpointInfo & info, const rclcpp::Time & now)
+: topic_name(topic_name)
+, node_name(
+    info.node_namespace() == "/" ? info.node_namespace() + info.node_name()
+                                 : info.node_namespace() + "/" + info.node_name())
+, info(info)
+, last_stats_timestamp(now)
+{}
+
+void RosGraphMonitor::GraphTracking::clear()
 {
+  nodes.clear();
+  publishers.clear();
+  subscriptions.clear();
+  publisher_lookup.clear();
+  subscription_lookup.clear();
+  topic_endpoint_counts.clear();
+  ignored_nodes.clear();
+  returned_nodes.clear();
+  pubs_with_no_subs.clear();
+  subs_with_no_pubs.clear();
 }
 
-rosgraph_monitor_msgs::msg::Topic RosGraphMonitor::EndpointTracking::to_msg()
+rosgraph_msgs::msg::Topic RosGraphMonitor::EndpointTracking::to_msg()
 {
-  rosgraph_monitor_msgs::msg::Topic topic_msg;
+  rosgraph_msgs::msg::Topic topic_msg;
   topic_msg.name = topic_name;
-  topic_msg.type = info.topic_type();
+  topic_msg.type.name = info.topic_type();
+#ifndef ROS2_HUMBLE
+  // Humble's rclcpp does not expose the endpoint's type hash, so it is left at its default there.
+  const auto & type_hash = info.topic_type_hash();
+  topic_msg.type.hash.version = type_hash.version;
+  std::copy(std::begin(type_hash.value), std::end(type_hash.value), topic_msg.type.hash.value.begin());
+#endif
   topic_msg.qos = rosgraph_monitor::to_msg(info.qos_profile());
   return topic_msg;
 }
@@ -165,15 +245,82 @@ RosGraphMonitor::RosGraphMonitor(
   rclcpp::node_interfaces::NodeGraphInterface::SharedPtr node_graph,
   std::function<rclcpp::Time()> now_fn,
   rclcpp::Logger logger,
-  QueryParams query_params,
-  GraphMonitorConfiguration config
-)
-: config_(config),
-  now_fn_(now_fn),
-  node_graph_(node_graph),
-  logger_(logger),
-  graph_change_event_(node_graph->get_graph_event()),
-  query_params_(query_params)
+  std::shared_ptr<ParameterServiceClient> parameter_client,
+  GraphMonitorConfiguration config,
+  GraphChangeCallback change_callback)
+: config_(config)
+, now_fn_(now_fn)
+, node_graph_(node_graph)
+, logger_(logger)
+, graph_change_event_(node_graph->get_graph_event())
+, parameter_client_(parameter_client)
+, graph_(GraphTracking{})
+, graph_change_callback_(change_callback)
+, descriptor_queries_(
+    [this](const std::string & node_name, DescriptorQueries::Done done) {
+      const auto names = recorded_parameter_names(node_name);
+      if (names.empty()) {
+        done(std::nullopt);
+        return;
+      }
+      if (!parameter_client_->is_ready(node_name)) {
+        RCLCPP_DEBUG(logger_, "Parameter services for %s are not available yet", node_name.c_str());
+        done(std::nullopt);
+        return;
+      }
+      parameter_client_->describe_parameters(node_name, names, std::move(done));
+    },
+    [this](const std::string & node_name, std::vector<rcl_interfaces::msg::ParameterDescriptor> descriptors) {
+      on_node_descriptors(node_name, std::move(descriptors));
+    },
+    DescriptorQueries::Options{
+      config.parameters.max_concurrent,
+      config.parameters.timeout,
+      config.parameters.retry_delay,
+      config.parameters.first_retry_delay})
+, value_queries_(
+    [this](const std::string & node_name, ValueQueries::Done done) {
+      const auto names = recorded_parameter_names(node_name);
+      if (names.empty()) {
+        done(std::nullopt);
+        return;
+      }
+      if (!parameter_client_->is_ready(node_name)) {
+        RCLCPP_DEBUG(logger_, "Parameter services for %s are not available yet", node_name.c_str());
+        done(std::nullopt);
+        return;
+      }
+      // The response carries no names, so the requested ones travel with it to the receipt.
+      parameter_client_->get_parameters(
+        node_name,
+        names,
+        [names, done = std::move(done)](std::optional<std::vector<rcl_interfaces::msg::ParameterValue>> values) {
+          if (!values) {
+            done(std::nullopt);
+            return;
+          }
+          done(ValueResponse{names, std::move(*values)});
+        });
+    },
+    [this](const std::string & node_name, ValueResponse response) { on_node_values(node_name, std::move(response)); },
+    ValueQueries::Options{config.parameters.max_concurrent, config.parameters.timeout, config.parameters.retry_delay})
+, param_queries_(
+    [this](const std::string & node_name, ParamQueries::Done done) {
+      if (!parameter_client_->is_ready(node_name)) {
+        RCLCPP_DEBUG(logger_, "Parameter services for %s are not available yet", node_name.c_str());
+        done(std::nullopt);
+        return;
+      }
+      parameter_client_->list_parameters(node_name, std::move(done));
+    },
+    [this](const std::string & node_name, std::vector<std::string> parameter_names) {
+      on_node_parameters(node_name, std::move(parameter_names));
+    },
+    ParamQueries::Options{
+      config.parameters.max_concurrent,
+      config.parameters.timeout,
+      config.parameters.retry_delay,
+      config.parameters.first_retry_delay})
 {
   update_graph();
   watch_thread_ = std::thread(std::bind(&RosGraphMonitor::watch_for_updates, this));
@@ -187,27 +334,41 @@ RosGraphMonitor::~RosGraphMonitor()
   node_graph_->notify_shutdown();
   update_event_.set();
 
-  params_futures.clear();
-
   watch_thread_.join();
 }
 
 void RosGraphMonitor::update_graph()
 {
-  auto node_names = node_graph_->get_node_names();
-  track_node_updates(node_names);
-
+  const auto node_names = node_graph_->get_node_names();
   const auto topics_and_types = node_graph_->get_topic_names_and_types();
-  track_endpoint_updates(topics_and_types);
+
+  NodeChanges changes;
+  {
+    auto graph = graph_.lock();
+    changes = track_node_updates(node_names, *graph);
+    track_endpoint_updates(topics_and_types, *graph);
+  }
+
+  // Outside the lock: the query queue's thread and the change callback both take it.
+  for (const auto & node_name : changes.to_observe) {
+    param_queries_.request(node_name);
+  }
+  for (const auto & node_name : changes.departed) {
+    param_queries_.cancel(node_name);
+    descriptor_queries_.cancel(node_name);
+    value_queries_.cancel(node_name);
+    parameter_client_->forget(node_name);
+  }
+  notify_graph_change();
 }
 
-bool RosGraphMonitor::ignore_node(const std::string & node_name)
+bool RosGraphMonitor::ignore_node(const std::string & node_name, GraphTracking & graph)
 {
   if (node_name == "_NODE_NAMESPACE_UNKNOWN_/_NODE_NAME_UNKNOWN_") {
     return true;
   }
   if (match_any_prefixes(config_.nodes.ignore_prefixes, node_name)) {
-    auto [it, inserted] = ignored_nodes_.insert(node_name);
+    auto [it, inserted] = graph.ignored_nodes.insert(node_name);
     if (inserted) {
       RCLCPP_DEBUG(logger_, "Ignoring new node: %s", node_name.c_str());
     }
@@ -216,117 +377,98 @@ bool RosGraphMonitor::ignore_node(const std::string & node_name)
   return false;
 }
 
-void RosGraphMonitor::track_node_updates(
-  const std::vector<std::string> & observed_node_names)
+RosGraphMonitor::NodeChanges RosGraphMonitor::track_node_updates(
+  const std::vector<std::string> & observed_node_names, GraphTracking & graph)
 {
+  NodeChanges changes;
+
   // Mark all stale as base state
-  for (auto & [node_name, tracking] : nodes_) {
+  for (auto & [node_name, tracking] : graph.nodes) {
     tracking.stale = true;
   }
   // Look at current node list, detect new and returned
   for (const auto & node_name : observed_node_names) {
-    if (ignore_node(node_name)) {
+    if (ignore_node(node_name, graph)) {
       continue;
     }
 
     NodeTracking tracking{node_name};
-    auto [it, inserted] = nodes_.emplace(
-      node_name, tracking);
+    auto [it, inserted] = graph.nodes.emplace(node_name, tracking);
 
     if (inserted) {
       RCLCPP_DEBUG(logger_, "New node: %s", node_name.c_str());
-      query_node_parameters(node_name);
     } else {
       NodeTracking & tracking = it->second;
       tracking.stale = false;
       if (tracking.missing) {
         RCLCPP_INFO(logger_, "Node %s came back", node_name.c_str());
         tracking.missing = false;
-        returned_nodes_.insert(node_name);
-        query_node_parameters(node_name);
+        graph.returned_nodes.insert(node_name);
+        tracking.params.reset();
       }
     }
   }
   // Check which nodes are still stale - they weren't observed
-  for (auto & [node_name, tracking] : nodes_) {
+  for (auto & [node_name, tracking] : graph.nodes) {
     if (tracking.stale && !tracking.missing) {
       RCLCPP_WARN(logger_, "Node %s went missing", node_name.c_str());
       tracking.missing = true;
-      returned_nodes_.erase(node_name);
+      changes.departed.push_back(node_name);
+      graph.returned_nodes.erase(node_name);
+    } else if (!tracking.missing && !tracking.params.has_value()) {
+      changes.to_observe.push_back(node_name);
     }
   }
 
-  // Call graph change callback if set
-  if (graph_change_callback_) {
-    graph_change_callback_();
-  }
+  return changes;
 }
 
 std::optional<RosGraphMonitor::EndpointTrackingMap::iterator> RosGraphMonitor::add_publisher(
-  const std::string & topic_name, const rclcpp::TopicEndpointInfo & info)
+  const std::string & topic_name, const rclcpp::TopicEndpointInfo & info, GraphTracking & graph)
 {
   EndpointTracking proposed_tracking(topic_name, info, now_fn_());
-  if (ignore_node(proposed_tracking.node_name)) {
+  if (ignore_node(proposed_tracking.node_name, graph)) {
     return std::nullopt;
   }
-  auto [it, inserted] = publishers_.emplace(info.endpoint_gid(), proposed_tracking);
+  auto [it, inserted] = graph.publishers.emplace(info.endpoint_gid(), proposed_tracking);
   auto & [gid, tracking] = *it;
-  publisher_lookup_.insert_or_assign(std::make_pair(tracking.node_name, tracking.topic_name), gid);
+  graph.publisher_lookup.insert_or_assign(std::make_pair(tracking.node_name, tracking.topic_name), gid);
   if (inserted) {
     RCLCPP_DEBUG(
-      logger_, "New Publisher: %s::%s (%s)",
-      tracking.node_name.c_str(), tracking.topic_name.c_str(),
+      logger_,
+      "New Publisher: %s::%s (%s)",
+      tracking.node_name.c_str(),
+      tracking.topic_name.c_str(),
       gid_to_str(tracking.info.endpoint_gid()).c_str());
   }
   return it;
-}
-
-std::optional<RosRmwGid> RosGraphMonitor::lookup_publisher(
-  const std::string & node_name, const std::string & topic_name) const
-{
-  try {
-    return publisher_lookup_.at(std::make_pair(node_name, topic_name));
-  } catch (const std::out_of_range &) {
-    return std::nullopt;
-  }
 }
 
 std::optional<RosGraphMonitor::EndpointTrackingMap::iterator> RosGraphMonitor::add_subscription(
-  const std::string & topic_name, const rclcpp::TopicEndpointInfo & info)
+  const std::string & topic_name, const rclcpp::TopicEndpointInfo & info, GraphTracking & graph)
 {
   EndpointTracking proposed_tracking(topic_name, info, now_fn_());
-  if (ignore_node(proposed_tracking.node_name)) {
+  if (ignore_node(proposed_tracking.node_name, graph)) {
     return std::nullopt;
   }
-  auto [it, inserted] = subscriptions_.emplace(info.endpoint_gid(), proposed_tracking);
+  auto [it, inserted] = graph.subscriptions.emplace(info.endpoint_gid(), proposed_tracking);
   auto & [gid, tracking] = *it;
-  subscription_lookup_.insert_or_assign(
-    std::make_pair(tracking.node_name, tracking.topic_name),
-    gid);
+  graph.subscription_lookup.insert_or_assign(std::make_pair(tracking.node_name, tracking.topic_name), gid);
   if (inserted) {
     RCLCPP_DEBUG(
-      logger_, "New Subscription: %s::%s (%s)",
-      tracking.node_name.c_str(), tracking.topic_name.c_str(),
+      logger_,
+      "New Subscription: %s::%s (%s)",
+      tracking.node_name.c_str(),
+      tracking.topic_name.c_str(),
       gid_to_str(tracking.info.endpoint_gid()).c_str());
   }
   return it;
-}
-
-std::optional<RosRmwGid> RosGraphMonitor::lookup_subscription(
-  const std::string & node_name, const std::string & topic_name) const
-{
-  try {
-    return subscription_lookup_.at(std::make_pair(node_name, topic_name));
-  } catch (const std::out_of_range &) {
-    return std::nullopt;
-  }
 }
 
 bool RosGraphMonitor::topic_period_ok(
   const rosgraph_monitor_msgs::msg::TopicStatistic & stat, const rclcpp::Duration & deadline) const
 {
-  const std::chrono::nanoseconds measured_period =
-    rclcpp::Duration(stat.mean).to_chrono<std::chrono::nanoseconds>();
+  const std::chrono::nanoseconds measured_period = rclcpp::Duration(stat.mean).to_chrono<std::chrono::nanoseconds>();
   const std::chrono::nanoseconds chrono_deadline = deadline.to_chrono<std::chrono::nanoseconds>();
   if (measured_period < chrono_deadline) {
     return true;
@@ -336,17 +478,16 @@ bool RosGraphMonitor::topic_period_ok(
   return period_error <= allowed_error;
 }
 
-
-void RosGraphMonitor::track_endpoint_updates(const TopicsToTypes & observed_topics_and_types)
+void RosGraphMonitor::track_endpoint_updates(const TopicsToTypes & observed_topics_and_types, GraphTracking & graph)
 {
   // Mark all stale as base state
-  for (auto & [gid, tracking] : publishers_) {
+  for (auto & [gid, tracking] : graph.publishers) {
     tracking.stale = true;
   }
-  for (auto & [gid, tracking] : subscriptions_) {
+  for (auto & [gid, tracking] : graph.subscriptions) {
     tracking.stale = true;
   }
-  for (auto & [topic_name, counts] : topic_endpoint_counts_) {
+  for (auto & [topic_name, counts] : graph.topic_endpoint_counts) {
     counts.pubs = 0;
     counts.subs = 0;
   }
@@ -354,14 +495,13 @@ void RosGraphMonitor::track_endpoint_updates(const TopicsToTypes & observed_topi
   // Look over all currently observed topics for endpoint changes
   for (const auto & [topic_name, topic_types] : observed_topics_and_types) {
     // Assumption: "multiple types on the topic" is an error already handled elsewhere
-    bool count_topic =
-      config_.continuity.ignore_topic_names.count(topic_name) == 0 &&
-      config_.continuity.ignore_topic_types.count(topic_types[0]) == 0;
-    auto & endpoint_counts = topic_endpoint_counts_[topic_name];
+    bool count_topic = config_.continuity.ignore_topic_names.count(topic_name) == 0 &&
+                       config_.continuity.ignore_topic_types.count(topic_types[0]) == 0;
+    auto & endpoint_counts = graph.topic_endpoint_counts[topic_name];
 
     // Check all publishers
     for (const auto & endpoint_info : node_graph_->get_publishers_info_by_topic(topic_name)) {
-      auto maybe_it = add_publisher(topic_name, endpoint_info);
+      auto maybe_it = add_publisher(topic_name, endpoint_info, graph);
       if (!maybe_it.has_value()) {
         continue;
       }
@@ -374,14 +514,13 @@ void RosGraphMonitor::track_endpoint_updates(const TopicsToTypes & observed_topi
 
     // Check all subscriptions
     for (const auto & endpoint_info : node_graph_->get_subscriptions_info_by_topic(topic_name)) {
-      auto maybe_it = add_subscription(topic_name, endpoint_info);
+      auto maybe_it = add_subscription(topic_name, endpoint_info, graph);
       if (!maybe_it.has_value()) {
         continue;
       }
       auto & [gid, tracking] = **maybe_it;
 
-      bool count_subs_from_node =
-        config_.continuity.ignore_subscriber_nodes.count(tracking.node_name) == 0;
+      bool count_subs_from_node = config_.continuity.ignore_subscriber_nodes.count(tracking.node_name) == 0;
       if (count_topic && count_subs_from_node) {
         endpoint_counts.subs++;
       }
@@ -392,11 +531,11 @@ void RosGraphMonitor::track_endpoint_updates(const TopicsToTypes & observed_topi
   // Check for any stale endpoints (not seen this iteration) - they're missing.
   // For now just delete them, there isn't a meaningful health case to track at this point
   // Also remove endpoints from missing node, that node missing is the important error.
-  for (EndpointTrackingMap * endpoints : {&publishers_, &subscriptions_}) {
-    for (auto it = endpoints->begin(); it != endpoints->end(); ) {
+  for (EndpointTrackingMap * endpoints : {&graph.publishers, &graph.subscriptions}) {
+    for (auto it = endpoints->begin(); it != endpoints->end();) {
       auto & [gid, tracking] = *it;
-      const auto node_it = nodes_.find(tracking.node_name);
-      bool node_not_tracked = node_it == nodes_.end();
+      const auto node_it = graph.nodes.find(tracking.node_name);
+      bool node_not_tracked = node_it == graph.nodes.end();
       bool node_missing = node_not_tracked ? true : node_it->second.missing;
       if (node_missing || tracking.stale) {
         it = endpoints->erase(it);
@@ -408,20 +547,20 @@ void RosGraphMonitor::track_endpoint_updates(const TopicsToTypes & observed_topi
 
   // Super basic graph continuity test - does not yet account for QoS mismatch
   if (config_.continuity.enable) {
-    for (auto it = topic_endpoint_counts_.begin(); it != topic_endpoint_counts_.end(); ) {
+    for (auto it = graph.topic_endpoint_counts.begin(); it != graph.topic_endpoint_counts.end();) {
       auto & [topic_name, counts] = *it;
       // Check counts to see if any pubs or subs don't have matches
       if (counts.pubs > 0 && counts.subs == 0) {
-        pubs_with_no_subs_.insert(topic_name);
+        graph.pubs_with_no_subs.insert(topic_name);
       }
       if (counts.subs > 0 && counts.pubs == 0) {
-        subs_with_no_pubs_.insert(topic_name);
+        graph.subs_with_no_pubs.insert(topic_name);
       }
       // Delete any lingering tracking with no matches at all, the topic doesn't exist anymore
       if (counts.pubs == 0 && counts.subs == 0) {
-        pubs_with_no_subs_.erase(topic_name);
-        subs_with_no_pubs_.erase(topic_name);
-        it = topic_endpoint_counts_.erase(it);
+        graph.pubs_with_no_subs.erase(topic_name);
+        graph.subs_with_no_pubs.erase(topic_name);
+        it = graph.topic_endpoint_counts.erase(it);
       } else {
         it++;
       }
@@ -435,13 +574,16 @@ void RosGraphMonitor::evaluate(std::vector<diagnostic_msgs::msg::DiagnosticStatu
 
   auto now = now_fn_();
 
+  auto graph_guard = graph_.lock();
+  auto & graph = *graph_guard;
+
   // Nodes
   {
     diagnostic_updater::DiagnosticStatusWrapper nodes_status;
     statusWrapper(nodes_status, DiagnosticStatus::OK, "Nodes OK", "nodes");
     size_t missing_optional_nodes = 0;
     size_t missing_required_nodes = 0;
-    for (const auto & [node_name, node_info] : nodes_) {
+    for (const auto & [node_name, node_info] : graph.nodes) {
       if (node_info.missing) {
         if (match_any_prefixes(config_.nodes.warn_only_prefixes, node_name)) {
           nodes_status.add("Optional node missing", node_name);
@@ -452,16 +594,14 @@ void RosGraphMonitor::evaluate(std::vector<diagnostic_msgs::msg::DiagnosticStatu
         }
       }
     }
-    for (const std::string & node_name : returned_nodes_) {
+    for (const std::string & node_name : graph.returned_nodes) {
       nodes_status.addf("Node came back: %s", node_name.c_str());
     }
     if (missing_required_nodes > 0) {
-      nodes_status.summaryf(
-        DiagnosticStatus::ERROR, "%d required node(s) missing.", missing_required_nodes);
+      nodes_status.summaryf(DiagnosticStatus::ERROR, "%d required node(s) missing.", missing_required_nodes);
     }
     if (missing_optional_nodes > 0) {
-      nodes_status.mergeSummaryf(
-        DiagnosticStatus::WARN, "%d optional node(s) missing.", missing_optional_nodes);
+      nodes_status.mergeSummaryf(DiagnosticStatus::WARN, "%d optional node(s) missing.", missing_optional_nodes);
     }
     status.push_back(nodes_status);
   }
@@ -470,45 +610,41 @@ void RosGraphMonitor::evaluate(std::vector<diagnostic_msgs::msg::DiagnosticStatu
   {
     diagnostic_updater::DiagnosticStatusWrapper continuity_status;
     statusWrapper(continuity_status, DiagnosticStatus::OK, "Graph continuity OK", "continuity");
-    for (const auto & [topic_name, counts] : topic_endpoint_counts_) {
-      if (counts.pubs > 0 && subs_with_no_pubs_.erase(topic_name) > 0) {
+    for (const auto & [topic_name, counts] : graph.topic_endpoint_counts) {
+      if (counts.pubs > 0 && graph.subs_with_no_pubs.erase(topic_name) > 0) {
         continuity_status.add("Dead sink cleared. Topic now has publisher(s).", topic_name);
       }
-      if (counts.subs > 0 && pubs_with_no_subs_.erase(topic_name) > 0) {
+      if (counts.subs > 0 && graph.pubs_with_no_subs.erase(topic_name) > 0) {
         continuity_status.add("Leaf topic cleared. Topic now has subscriber(s).", topic_name);
       }
     }
     size_t continuity_issues = 0;
-    for (const auto & topic_name : pubs_with_no_subs_) {
+    for (const auto & topic_name : graph.pubs_with_no_subs) {
       continuity_status.add("Leaf topic (No subscriptions): Topic", topic_name);
       continuity_issues++;
     }
-    for (const auto & topic_name : subs_with_no_pubs_) {
+    for (const auto & topic_name : graph.subs_with_no_pubs) {
       continuity_status.add("Dead sink (No publishers): Topic", topic_name);
       continuity_issues++;
     }
     if (continuity_issues > 0) {
-      continuity_status.summaryf(
-        DiagnosticStatus::WARN,
-        "%d continuity issues detected.",
-        continuity_issues);
+      continuity_status.summaryf(DiagnosticStatus::WARN, "%d continuity issues detected.", continuity_issues);
     }
     status.push_back(continuity_status);
   }
 
   // Frequency
   auto deadline_not_set = [](const rclcpp::Duration & dur) {
-      return rmw_time_equal(dur.to_rmw_time(), RMW_DURATION_INFINITE) ||
-             rmw_time_equal(dur.to_rmw_time(), RMW_DURATION_UNSPECIFIED);
-    };
+    return rmw_time_equal(dur.to_rmw_time(), RMW_DURATION_INFINITE) ||
+           rmw_time_equal(dur.to_rmw_time(), RMW_DURATION_UNSPECIFIED);
+  };
   {
     diagnostic_updater::DiagnosticStatusWrapper pub_freq_status;
-    statusWrapper(
-      pub_freq_status, DiagnosticStatus::OK, "Publish frequencies OK", "publish_frequency");
+    statusWrapper(pub_freq_status, DiagnosticStatus::OK, "Publish frequencies OK", "publish_frequency");
 
     size_t pub_freq_errors = 0;
     size_t pub_freq_warns = 0;
-    for (const auto & [gid, tracking] : publishers_) {
+    for (const auto & [gid, tracking] : graph.publishers) {
       auto deadline = tracking.info.qos_profile().deadline();
       const std::string & topic = tracking.topic_name;
       bool stale = (now - tracking.last_stats_timestamp) > config_.topic_statistics.stale_timeout;
@@ -535,26 +671,19 @@ void RosGraphMonitor::evaluate(std::vector<diagnostic_msgs::msg::DiagnosticStatu
       }
     }
     if (pub_freq_errors > 0) {
-      pub_freq_status.summaryf(
-        DiagnosticStatus::ERROR,
-        "Frequency errors detected.",
-        pub_freq_errors);
+      pub_freq_status.summaryf(DiagnosticStatus::ERROR, "Frequency errors detected.", pub_freq_errors);
     }
     if (pub_freq_warns > 0) {
-      pub_freq_status.summaryf(
-        DiagnosticStatus::WARN,
-        "Frequency warnings detected.",
-        pub_freq_warns);
+      pub_freq_status.summaryf(DiagnosticStatus::WARN, "Frequency warnings detected.", pub_freq_warns);
     }
     status.push_back(pub_freq_status);
   }
   {
     diagnostic_updater::DiagnosticStatusWrapper sub_freq_status;
-    statusWrapper(
-      sub_freq_status, DiagnosticStatus::OK, "Receive frequencies OK", "receive_frequency");
+    statusWrapper(sub_freq_status, DiagnosticStatus::OK, "Receive frequencies OK", "receive_frequency");
     size_t sub_freq_errors = 0;
     size_t sub_freq_warns = 0;
-    for (const auto & [gid, tracking] : subscriptions_) {
+    for (const auto & [gid, tracking] : graph.subscriptions) {
       auto deadline = tracking.info.qos_profile().deadline();
       const std::string & topic = tracking.topic_name;
       bool stale = (now - tracking.last_stats_timestamp) > config_.topic_statistics.stale_timeout;
@@ -575,16 +704,10 @@ void RosGraphMonitor::evaluate(std::vector<diagnostic_msgs::msg::DiagnosticStatu
       }
     }
     if (sub_freq_errors > 0) {
-      sub_freq_status.summaryf(
-        DiagnosticStatus::ERROR,
-        "Frequency errors detected.",
-        sub_freq_errors);
+      sub_freq_status.summaryf(DiagnosticStatus::ERROR, "Frequency errors detected.", sub_freq_errors);
     }
     if (sub_freq_warns > 0) {
-      sub_freq_status.summaryf(
-        DiagnosticStatus::WARN,
-        "Frequency warnings detected.",
-        sub_freq_warns);
+      sub_freq_status.summaryf(DiagnosticStatus::WARN, "Frequency warnings detected.", sub_freq_warns);
     }
     status.push_back(sub_freq_status);
   }
@@ -592,11 +715,16 @@ void RosGraphMonitor::evaluate(std::vector<diagnostic_msgs::msg::DiagnosticStatu
 
 void RosGraphMonitor::watch_for_updates()
 {
-  const auto wait_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-    std::chrono::milliseconds(100));
+  const auto wait_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::milliseconds(100));
   while (!shutdown_) {
     if (graph_change_event_->check_and_clear()) {
-      update_graph();
+      // A graph query only fails once the context is gone, so watching ends instead of spinning on a dead context.
+      try {
+        update_graph();
+      } catch (const std::exception & e) {
+        RCLCPP_DEBUG(logger_, "Stopping graph watch: %s", e.what());
+        break;
+      }
       update_event_.set();
     }
     node_graph_->wait_for_graph_change(graph_change_event_, wait_ns);
@@ -614,38 +742,107 @@ GraphMonitorConfiguration & RosGraphMonitor::config()
   return config_;
 }
 
-
 const GraphMonitorConfiguration & RosGraphMonitor::config() const
 {
   return config_;
 }
 
+void RosGraphMonitor::set_config(GraphMonitorConfiguration config)
+{
+  {
+    auto graph = graph_.lock();
+    config.parameters = config_.parameters;
+    config_ = std::move(config);
+    graph->clear();
+  }
+
+  update_graph();
+  update_event_.set();
+}
+
 void RosGraphMonitor::on_topic_statistics(const rosgraph_monitor_msgs::msg::TopicStatistics & msg)
 {
+  auto graph_guard = graph_.lock();
+  auto & graph = *graph_guard;
+
   for (const auto & stat : msg.statistics) {
-    std::optional<RosRmwGid> maybe_gid;
+    RosRmwGid gid;
     EndpointTrackingMap * endpoints = nullptr;
     if (stat.statistic_type == rosgraph_monitor_msgs::msg::TopicStatistic::PUBLISHED_PERIOD) {
-      maybe_gid = lookup_publisher(stat.node_name, stat.topic_name);
-      endpoints = &publishers_;
+      try {
+        gid = graph.publisher_lookup.at(std::make_pair(stat.node_name, stat.topic_name));
+      } catch (const std::out_of_range &) {
+        continue;
+      }
+      endpoints = &graph.publishers;
     } else if (stat.statistic_type == rosgraph_monitor_msgs::msg::TopicStatistic::RECEIVED_PERIOD) {
-      maybe_gid = lookup_subscription(stat.node_name, stat.topic_name);
-      endpoints = &subscriptions_;
+      try {
+        gid = graph.subscription_lookup.at(std::make_pair(stat.node_name, stat.topic_name));
+      } catch (const std::out_of_range &) {
+        continue;
+      }
+      endpoints = &graph.subscriptions;
     } else {
       continue;
     }
 
-    if (!maybe_gid.has_value()) {
-      continue;
-    }
     assert(endpoints != nullptr);
-    auto it = endpoints->find(*maybe_gid);
+    auto it = endpoints->find(gid);
     if (it == endpoints->end()) {
       continue;
     }
-    auto & [gid, tracking] = *it;
+    auto & [tracked_gid, tracking] = *it;
     tracking.last_stats_timestamp = rclcpp::Time(msg.timestamp, RCL_ROS_TIME);
     tracking.period_stat = stat;
+  }
+}
+
+void RosGraphMonitor::on_parameter_event(const rcl_interfaces::msg::ParameterEvent & event)
+{
+  bool changed = false;
+  {
+    // Runs on the subscription's thread, while the watch thread may be rebuilding the graph.
+    auto graph = graph_.lock();
+    auto it = graph->nodes.find(event.node);
+    if (it == graph->nodes.end() || !it->second.params) {
+      // The node is untracked, or its parameters are not observed yet; the initial observation covers it.
+      return;
+    }
+    auto & params = *it->second.params;
+
+    for (const auto & parameter : event.deleted_parameters) {
+      const auto descriptor =
+        std::find_if(params.descriptors.begin(), params.descriptors.end(), [&parameter](const auto & candidate) {
+          return candidate.name == parameter.name;
+        });
+      if (descriptor != params.descriptors.end()) {
+        params.descriptors.erase(descriptor);
+        changed = true;
+      }
+      changed = params.values.erase(parameter.name) != 0 || changed;
+      params.event_valued.erase(parameter.name);
+    }
+
+    for (const auto * parameters : {&event.new_parameters, &event.changed_parameters}) {
+      for (const auto & parameter : *parameters) {
+        // An event carries no descriptor, so a name with no recorded one is typed from its value.
+        if (!named_among(params.descriptors, parameter.name)) {
+          rcl_interfaces::msg::ParameterDescriptor descriptor;
+          descriptor.name = parameter.name;
+          descriptor.type = parameter.value.type;
+          params.descriptors.push_back(std::move(descriptor));
+          changed = true;
+        }
+        const auto recorded = params.values.find(parameter.name);
+        changed = recorded == params.values.end() || recorded->second != parameter.value || changed;
+        params.values.insert_or_assign(parameter.name, parameter.value);
+        changed = params.event_valued.insert(parameter.name).second || changed;
+      }
+    }
+  }
+
+  if (changed) {
+    notify_graph_change();
   }
 }
 
@@ -663,27 +860,29 @@ void RosGraphMonitor::statusWrapper(
   msg.hardware_id = "health";
 }
 
-void RosGraphMonitor::fill_rosgraph_msg(rosgraph_monitor_msgs::msg::Graph & msg)
+void RosGraphMonitor::fill_rosgraph_msg(rosgraph_msgs::msg::Graph & msg)
 {
-  msg.timestamp = now_fn_();
   msg.nodes.clear();
 
-  RCLCPP_DEBUG(logger_, "EVENT rosgraph message with %zu nodes", nodes_.size());
+  auto graph_guard = graph_.lock();
+  auto & graph = *graph_guard;
+  RCLCPP_DEBUG(logger_, "EVENT rosgraph message with %zu nodes", graph.nodes.size());
 
-  for (const auto & [node_name, node_info] : nodes_) {
-    if (ignore_node(node_name) || node_info.missing || node_info.stale) {
+  for (const auto & [node_name, node_info] : graph.nodes) {
+    if (ignore_node(node_name, graph) || node_info.missing || node_info.stale) {
       continue;
     }
 
-    rosgraph_monitor_msgs::msg::NodeInfo node_msg;
+    rosgraph_msgs::msg::Node node_msg;
     node_msg.name = node_name;
 
-    for (const auto & param : node_info.params) {
-      node_msg.parameters.push_back(param.to_msg());
+    if (node_info.params) {
+      node_msg.parameters = node_info.params->descriptors;
+      node_msg.parameter_values = parallel_values(node_info.params->descriptors, node_info.params->values);
     }
 
     // Add publishers for this node
-    for (auto & [gid, tracking] : publishers_) {
+    for (auto & [gid, tracking] : graph.publishers) {
       if (tracking.node_name == node_name) {
         auto topic_msg = tracking.to_msg();
         node_msg.publishers.push_back(topic_msg);
@@ -691,7 +890,7 @@ void RosGraphMonitor::fill_rosgraph_msg(rosgraph_monitor_msgs::msg::Graph & msg)
     }
 
     // Add subscriptions for this node
-    for (auto & [gid, tracking] : subscriptions_) {
+    for (auto & [gid, tracking] : graph.subscriptions) {
       if (tracking.node_name == node_name) {
         auto topic_msg = tracking.to_msg();
         node_msg.subscriptions.push_back(topic_msg);
@@ -701,44 +900,119 @@ void RosGraphMonitor::fill_rosgraph_msg(rosgraph_monitor_msgs::msg::Graph & msg)
   }
 }
 
-void RosGraphMonitor::set_graph_change_callback(
-  std::function<void(rosgraph_monitor_msgs::msg::Graph &)> callback)
+void RosGraphMonitor::notify_graph_change()
 {
-  graph_change_callback_ = [callback, this]() {
-      rosgraph_monitor_msgs::msg::Graph msg;
-      fill_rosgraph_msg(msg);
-      callback(msg);
-    };
+  if (graph_change_callback_) {
+    rosgraph_msgs::msg::Graph msg;
+    fill_rosgraph_msg(msg);
+    graph_change_callback_(msg);
+  }
 }
 
-void RosGraphMonitor::query_node_parameters(const std::string & node_name)
+std::vector<std::string> RosGraphMonitor::recorded_parameter_names(const std::string & node_name)
 {
-  // Non-blocking async call for parameter query. Hold onto the future to track completion.
-  params_futures[node_name] = query_params_(
-    node_name,
-    [this, node_name_copy = std::string(node_name)](
-      const rcl_interfaces::msg::ListParametersResult & result) {
-      RCLCPP_INFO(
-        logger_, "Got parameters for node %s: %zu", node_name_copy.c_str(),
-        result.names.size());
-      auto it = nodes_.find(node_name_copy);
-      if (it == nodes_.end()) {
-        RCLCPP_WARN(logger_, "Node %s not found in tracking map", node_name_copy.c_str());
-        return;
-      }
-      auto & tracking = it->second;
-      tracking.params.clear();
-      tracking.params.reserve(result.names.size());
-      for (const auto & param_name : result.names) {
-        tracking.params.push_back(
-          ParameterTracking{param_name,
-            rcl_interfaces::msg::ParameterType::PARAMETER_NOT_SET});
-      }
-      if (!tracking.params.empty()) {
-        graph_change_callback_();
-      }
-    });
+  std::vector<std::string> names;
+  auto graph = graph_.lock();
+  const auto it = graph->nodes.find(node_name);
+  if (it == graph->nodes.end() || !it->second.params) {
+    return names;
+  }
+  const auto & descriptors = it->second.params->descriptors;
+  names.reserve(descriptors.size());
+  for (const auto & descriptor : descriptors) {
+    names.push_back(descriptor.name);
+  }
+  return names;
 }
 
+void RosGraphMonitor::on_node_parameters(const std::string & node_name, std::vector<std::string> parameter_names)
+{
+  RCLCPP_DEBUG(logger_, "Observed %zu parameters for node %s", parameter_names.size(), node_name.c_str());
+
+  bool changed = false;
+  {
+    // Runs on the query queue's thread, while the watch thread may be rebuilding the graph.
+    auto graph = graph_.lock();
+    auto it = graph->nodes.find(node_name);
+    if (it == graph->nodes.end()) {
+      // The node left the graph between the request and the response.
+      return;
+    }
+    auto & params = it->second.params;
+    // A first observation is a change even when the node has no parameters.
+    const bool first_observation = !params.has_value();
+    if (first_observation) {
+      params.emplace();
+    }
+    auto descriptors = reconcile_descriptors(params->descriptors, parameter_names, params->event_valued);
+    changed = first_observation || params->descriptors != descriptors;
+    params->descriptors = std::move(descriptors);
+    erase_unnamed_values(*params);
+  }
+
+  // Outside the lock: the descriptor and value queries' start calls take it.
+  if (!parameter_names.empty()) {
+    descriptor_queries_.request(node_name);
+    value_queries_.request(node_name);
+  }
+  if (changed) {
+    notify_graph_change();
+  }
+}
+
+void RosGraphMonitor::on_node_descriptors(
+  const std::string & node_name, std::vector<rcl_interfaces::msg::ParameterDescriptor> descriptors)
+{
+  RCLCPP_DEBUG(logger_, "Observed %zu parameter descriptors for node %s", descriptors.size(), node_name.c_str());
+
+  bool changed = false;
+  {
+    // Runs on the query queue's thread, while the watch thread may be rebuilding the graph.
+    auto graph = graph_.lock();
+    auto it = graph->nodes.find(node_name);
+    if (it == graph->nodes.end() || !it->second.params) {
+      // The node left the graph, or lost its observation, between the request and the response.
+      return;
+    }
+    auto & params = *it->second.params;
+    auto merged = merge_descriptors(params.descriptors, descriptors);
+    changed = params.descriptors != merged;
+    params.descriptors = std::move(merged);
+  }
+
+  if (changed) {
+    notify_graph_change();
+  }
+}
+
+void RosGraphMonitor::on_node_values(const std::string & node_name, ValueResponse response)
+{
+  RCLCPP_DEBUG(logger_, "Observed %zu parameter values for node %s", response.second.size(), node_name.c_str());
+
+  bool changed = false;
+  {
+    // Runs on the query queue's thread, while the watch thread may be rebuilding the graph.
+    auto graph = graph_.lock();
+    auto it = graph->nodes.find(node_name);
+    if (it == graph->nodes.end() || !it->second.params) {
+      // The node left the graph, or lost its observation, between the request and the response.
+      return;
+    }
+    auto & params = *it->second.params;
+    const auto paired = pair_values(response);
+    for (const auto & descriptor : params.descriptors) {
+      const auto value = paired.find(descriptor.name);
+      if (value == paired.end() || params.values.count(descriptor.name) != 0) {
+        continue;
+      }
+      params.values.emplace(descriptor.name, value->second);
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    notify_graph_change();
+  }
+}
 
 }  // namespace rosgraph_monitor
