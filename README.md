@@ -1,88 +1,95 @@
-# ROS 2 Graph Monitor
+# Rosgraph Monitor
 
-The packages in this repository implement monitoring for an entire ROS node graph.
+Provides a C++ library `rosgraph_monitor` with main class `rosgraph_monitor::RosgraphMonitor`, which watches the entire ROS application to create an up-to-date graph representation, running analyses to check whether it meets certain "healthy" criteria.
 
-See each package's README for information on its design and usage:
+The library may be used directly by application code, or run standalone as a parameter-configurable ROS Node `rosgraph_monitor_node`.
 
-* [rosgraph_monitor](./rosgraph_monitor/) - A library and node to monitor the ROS graph, publish periodic snapshots, and emit diagnostics reflecting analyses of its health
-* [rosgraph_monitor_msgs](./rosgraph_monitor_msgs/) - Messages for reporting topic statistics
-* [rmw_stats_shim](./rmw_stats_shim/) - RMW wrapper to efficiently gather and report global topic statistics
+Either way it's used, the Graph Monitor provides a set of [`diagnostic_msgs/DiagnosticStatus`](https://docs.ros.org/en/rolling/p/diagnostic_msgs/msg/DiagnosticStatus.html) summarizing the graph health.
+These Diagnostics are provided in a friendly format for [`DiagnosticAggregator`](https://docs.ros.org/en/rolling/p/diagnostic_aggregator/) to interpret as a toplevel health status.
 
-For development workflows and context, see [DEVELOPING.md](./DEVELOPING.md)
+A [convenience launch file](./launch/monitor_launch.yaml) is provided which starts the graph monitor node and a properly configured diagnostic aggregator, and can be used directly or as an example for usage pattern.
 
-## Documentation
+## Graph Representation
 
-Documentation pages for each package are published on docs.ros.org. Quick links by distribution:
+The monitor keeps track of the following entities and their relationships:
 
-| Distro | `rmw_stats_shim` | `rosgraph_monitor_msgs` | `rosgraph_monitor` |
-|---|---:|---:|---:|
-| Rolling | [docs](https://docs.ros.org/en/rolling/p/rmw_stats_shim/) | [docs](https://docs.ros.org/en/rolling/p/rosgraph_monitor_msgs/) | [docs](https://docs.ros.org/en/rolling/p/rosgraph_monitor/) |
-| Kilted | [docs](https://docs.ros.org/en/kilted/p/rmw_stats_shim/) | [docs](https://docs.ros.org/en/kilted/p/rosgraph_monitor_msgs/) | [docs](https://docs.ros.org/en/kilted/p/rosgraph_monitor/) |
-| Jazzy | [docs](https://docs.ros.org/en/jazzy/p/rmw_stats_shim/) | [docs](https://docs.ros.org/en/jazzy/p/rosgraph_monitor_msgs/) | [docs](https://docs.ros.org/en/jazzy/p/rosgraph_monitor/) |
-| Humble | [docs](https://docs.ros.org/en/humble/p/rmw_stats_shim/) | [docs](https://docs.ros.org/en/humble/p/rosgraph_monitor_msgs/) | [docs](https://docs.ros.org/en/humble/p/rosgraph_monitor/) |
+- Node
+  - name
+  - parameters
+  - publishers
+  - subscriptions
+- Parameter
+  - name
+  - type
+- Publisher
+  - node
+  - name
+  - type
+  - QoS profile
+- Subscription
+  - node
+  - name
+  - type
+  - QoS profile
 
-## Release Status
+## Health Checks
 
-<table width="100%">
-  <tr>
-    <th>ROS2 Distro</th>
-    <th>Humble</th>
-    <th>Jazzy</th>
-    <th>Kilted</th>
-    <th>Rolling</th>
-  </tr>
-  <tr>
-    <th>Release status</th>
-    <td> <!-- humble -->
-      <a href='https://build.ros2.org/job/Hdev__graph_monitor__ubuntu_jammy_amd64/'><img src='https://build.ros2.org/job/Hdev__graph_monitor__ubuntu_jammy_amd64/badge/icon?subject=Dev'></a><br/>
-      <a href='https://build.ros2.org/job/Hdoc__graph_monitor__ubuntu_jammy_amd64/'><img src='https://build.ros2.org/job/Hdoc__graph_monitor__ubuntu_jammy_amd64/badge/icon?subject=Doc'></a><br/>
-      <a href='https://build.ros2.org/job/Hbin_uJ64__rmw_stats_shim__ubuntu_jammy_amd64__binary/'><img src='https://build.ros2.org/job/Hbin_uJ64__rmw_stats_shim__ubuntu_jammy_amd64__binary/badge/icon?subject=rmw_stats_shim'></a><br/>
-      <a href='https://build.ros2.org/job/Hbin_uJ64__rosgraph_monitor__ubuntu_jammy_amd64__binary/'><img src='https://build.ros2.org/job/Hbin_uJ64__rosgraph_monitor__ubuntu_jammy_amd64__binary/badge/icon?subject=rosgraph_monitor'></a><br/>
-      <a href='https://build.ros2.org/job/Hbin_uJ64__rosgraph_monitor_msgs__ubuntu_jammy_amd64__binary/'><img src='https://build.ros2.org/job/Hbin_uJ64__rosgraph_monitor_msgs__ubuntu_jammy_amd64__binary/badge/icon?subject=rosgraph_monitor_msgs'></a>
-    </td>
-    <td> <!-- jazzy -->
-      <a href='https://build.ros2.org/job/Jdev__graph_monitor__ubuntu_noble_amd64/'><img src='https://build.ros2.org/job/Jdev__graph_monitor__ubuntu_noble_amd64/badge/icon?subject=Dev'></a><br/>
-      <a href='https://build.ros2.org/job/Jdoc__graph_monitor__ubuntu_noble_amd64/'><img src='https://build.ros2.org/job/Jdoc__graph_monitor__ubuntu_noble_amd64/badge/icon?subject=Doc'></a><br/>
-      <a href='https://build.ros2.org/job/Jbin_uN64__rmw_stats_shim__ubuntu_noble_amd64__binary/'><img src='https://build.ros2.org/job/Jbin_uN64__rmw_stats_shim__ubuntu_noble_amd64__binary/badge/icon?subject=rmw_stats_shim'></a><br/>
-      <a href='https://build.ros2.org/job/Jbin_uN64__rosgraph_monitor__ubuntu_noble_amd64__binary/'><img src='https://build.ros2.org/job/Jbin_uN64__rosgraph_monitor__ubuntu_noble_amd64__binary/badge/icon?subject=rosgraph_monitor'></a><br/>
-      <a href='https://build.ros2.org/job/Jbin_uN64__rosgraph_monitor_msgs__ubuntu_noble_amd64__binary/'><img src='https://build.ros2.org/job/Jbin_uN64__rosgraph_monitor_msgs__ubuntu_noble_amd64__binary/badge/icon?subject=rosgraph_monitor_msgs'></a>
-    </td>
-    <td> <!-- kilted -->
-      <a href='https://build.ros2.org/job/Kdev__graph_monitor__ubuntu_noble_amd64/'><img src='https://build.ros2.org/job/Kdev__graph_monitor__ubuntu_noble_amd64/badge/icon?subject=Dev'></a><br/>
-      <a href='https://build.ros2.org/job/Kdoc__graph_monitor__ubuntu_noble_amd64/'><img src='https://build.ros2.org/job/Kdoc__graph_monitor__ubuntu_noble_amd64/badge/icon?subject=Doc'></a><br/>
-      <a href='https://build.ros2.org/job/Kbin_uN64__rmw_stats_shim__ubuntu_noble_amd64__binary/'><img src='https://build.ros2.org/job/Kbin_uN64__rmw_stats_shim__ubuntu_noble_amd64__binary/badge/icon?subject=rmw_stats_shim'></a><br/>
-      <a href='https://build.ros2.org/job/Kbin_uN64__rosgraph_monitor__ubuntu_noble_amd64__binary/'><img src='https://build.ros2.org/job/Kbin_uN64__rosgraph_monitor__ubuntu_noble_amd64__binary/badge/icon?subject=rosgraph_monitor'></a><br/>
-      <a href='https://build.ros2.org/job/Kbin_uN64__rosgraph_monitor_msgs__ubuntu_noble_amd64__binary/'><img src='https://build.ros2.org/job/Kbin_uN64__rosgraph_monitor_msgs__ubuntu_noble_amd64__binary/badge/icon?subject=rosgraph_monitor_msgs'></a>
-    </td>
-    <td> <!-- rolling -->
-      <a href='https://build.ros2.org/job/Rdev__graph_monitor__ubuntu_noble_amd64/'><img src='https://build.ros2.org/job/Rdev__graph_monitor__ubuntu_noble_amd64/badge/icon?subject=Dev'></a><br/>
-      <a href='https://build.ros2.org/job/Rdoc__graph_monitor__ubuntu_noble_amd64/'><img src='https://build.ros2.org/job/Rdoc__graph_monitor__ubuntu_noble_amd64/badge/icon?subject=Doc'></a><br/>
-      <a href='https://build.ros2.org/job/Rbin_uN64__rmw_stats_shim__ubuntu_noble_amd64__binary/'><img src='https://build.ros2.org/job/Rbin_uN64__rmw_stats_shim__ubuntu_noble_amd64__binary/badge/icon?subject=rmw_stats_shim'></a><br/>
-      <a href='https://build.ros2.org/job/Rbin_uN64__rosgraph_monitor__ubuntu_noble_amd64__binary/'><img src='https://build.ros2.org/job/Rbin_uN64__rosgraph_monitor__ubuntu_noble_amd64__binary/badge/icon?subject=rosgraph_monitor'></a><br/>
-      <a href='https://build.ros2.org/job/Rbin_uN64__rosgraph_monitor_msgs__ubuntu_noble_amd64__binary/'><img src='https://build.ros2.org/job/Rbin_uN64__rosgraph_monitor_msgs__ubuntu_noble_amd64__binary/badge/icon?subject=rosgraph_monitor_msgs'></a>
-    </td>
-  </tr>
-</table>
+These health criteria are provided:
+
+- Node Liveness: Report errors for nodes that were once present but are no longer in the graph
+- Graph Continuity: report warnings for publishers or subscriptions that don't have anything listening/sending on the other end
+- [Topic Frequencies](#frequency-checks): interpret `/topic_statistics` to determine whether certain topics aren't going at the expected rate. See following section for more information.
+
+This also provides a `rosgraph_monitor_node` for standalone use, for users who do not need custom integration of the `RosgraphMonitor` class.
+
+### Frequency Checks
+
+To set expectations for Topic Statistics Diagnostics, you must:
+
+1. Enable `/topic_statistics`. See [rmw_stats_shim](../rmw_stats_shim/) for how to do this
+1. Publishers that are expected to send at a fixed rate must set the Deadline QoS policy
+1. Subscriptions do not need any special treatment
+
+Note that the Deadline describes the expected _period_ of time between messages.
+This is the inverse of _frequency_.
+For example, if you expect your publisher to be publishing at 10Hz, then its Deadline is 0.1 seconds.
+
+The monitor is only using Deadline as a reporting mechanism for expected frequency of publishing - the underlying RMW implementation of the policy is not relevant.
+You do _not_ need to set the deadline on Subscriptions, or register any callbacks such as `DeadlineMissed`
+
+## Usage
+
+### API
+
+See [`RosGraphMonitor`](./include/rosgraph_monitor/monitor.hpp#L99)
+
+### Node
+
+Recommended: run the provided launchfile, which also launches a `DiagnosticsAggregator` to provide an appropriately interpreted `/diagnostics_agg` and `/diagnostics_toplevel_state`.
+
+```bash
+ros2 launch rosgraph_monitor monitor_launch.yaml
+```
+
+But you may also just run the standalone node, if you want to perform separate diagnostics aggregation
+
+```bash
+ros2 run rosgraph_monitor rosgraph_monitor_node
+```
+
+### Configuration
+
+See [params_decl.yaml](./src/params_decl.yaml) for the full parameters for the `rosgraph_monitor` Node.
+
+These parameters mirror the structure [`rosgraph_monitor::GraphMonitorConfiguration`](./include/rosgraph_monitor/monitor.hpp#L60), for those using the class directly instead of in the wrapping Node.
 
 ## Visualization
 
-This repository's scope is monitoring, reporting, and analysis of the ROS graph.
+A Foxglove extension is provided that can visualize the the `rosgraph_msgs/Graph` message type that is published on the topic `/rosgraph` by the monitor node.
 
-A Foxglove extension is [available in the public registry](https://github.com/polymathrobotics/foxglove_extensions/tree/main/ros2-graph) that can visualize the the `rosgraph_msgs/Graph` message type that is published on the topic `/rosgraph` by the monitor node.
+https://github.com/polymathrobotics/foxglove_extensions/tree/main/ros2-graph
 
-## Similar projects
+## Implementation Notes
 
-Here are some projects we have found that are trying achieve the same or similar goals.
-We keep this list with the hopes of collaborating with those maintainers on identifying feature gaps here that can be added.
-
-* https://github.com/nilseuropa/ros2graph_explorer
-* https://github.com/Eight-Vectors/ros2-studio-vscode-plugin
-
-Both of these projects provide more advanced visualizations than the Foxglove plugin, at the time of this writing, but less flexible architectures.
-We are especially interested in seeing how we can pull out one generically visualization component from all this.
-
-## History
-
-These code components were originally presented at ROSCon 2024 in "ROS robot health monitoring, a Bonsai approach": https://vimeo.com/1024971769
-
-They have since been expanded and are under ongoing development in the scope of the ROSGraph Working Group.
+The `RosgraphMonitor` class is built to not initiate any ROS communications, which means it can be used in any preexisting program or node.
+It is passed a `NodeGraphInterface` abstract class pointer to make queries about the graph structure, and is passed `TopicStatistics` messages.
