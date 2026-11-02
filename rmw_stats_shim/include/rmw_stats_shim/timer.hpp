@@ -1,20 +1,10 @@
-// Copyright 2024, Bonsai Robotics, Inc - All Rights Reserved
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-FileCopyrightText: 2024 Bonsai Robotics, Inc.
+// SPDX-License-Identifier: Apache-2.0
 
 #ifndef RMW_STATS_SHIM__TIMER_HPP_
 #define RMW_STATS_SHIM__TIMER_HPP_
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <functional>
@@ -57,7 +47,7 @@ private:
   std::function<void(void)> func_;
   std::chrono::milliseconds interval_;
   std::thread thread_;
-  bool running_ = false;
+  std::atomic<bool> running_ = false;
 };
 
 }  // namespace rmw_stats_shim
