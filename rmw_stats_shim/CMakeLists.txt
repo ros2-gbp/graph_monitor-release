@@ -1,18 +1,6 @@
-# Copyright 2024, Bonsai Robotics, Inc - All Rights Reserved
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-cmake_minimum_required(VERSION 3.8)
+# SPDX-FileCopyrightText: 2024 Bonsai Robotics, Inc.
+# SPDX-License-Identifier: Apache-2.0
+cmake_minimum_required(VERSION 3.22)
 project(rmw_stats_shim)
 
 if(NOT CMAKE_CXX_STANDARD)
@@ -31,6 +19,7 @@ find_package(rmw REQUIRED)
 find_package(rosgraph_monitor_msgs REQUIRED)
 find_package(rosidl_runtime_cpp REQUIRED)
 find_package(rosidl_typesupport_cpp REQUIRED)
+find_package(Threads REQUIRED)
 
 add_library(${PROJECT_NAME} SHARED
   src/shim.cpp
@@ -45,12 +34,21 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
   rmw::rmw
   rosidl_runtime_cpp::rosidl_runtime_cpp
   rosidl_typesupport_cpp::rosidl_typesupport_cpp
+  Threads::Threads
   ${rosgraph_monitor_msgs_TARGETS}
 )
 
 if(BUILD_TESTING)
-  find_package(ament_lint_auto REQUIRED)
-  ament_lint_auto_find_test_dependencies()
+  find_package(ament_cmake_gtest REQUIRED)
+
+  ament_add_gtest(test_timer test/test_timer.cpp)
+  target_link_libraries(test_timer ${PROJECT_NAME})
+
+  ament_add_gtest(test_stat_collector test/test_stat_collector.cpp)
+  target_link_libraries(test_stat_collector ${PROJECT_NAME})
+
+  ament_add_gtest(test_rolling_mean_accumulator test/test_rolling_mean_accumulator.cpp)
+  target_link_libraries(test_rolling_mean_accumulator ${PROJECT_NAME})
 endif()
 
 ament_export_targets(${PROJECT_NAME}Targets HAS_LIBRARY_TARGET)
